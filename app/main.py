@@ -1,14 +1,48 @@
-from fastapi import FastAPI
+import logging
+
+from fastapi import FastAPI, Request
 from fastapi.openapi.docs import get_swagger_ui_html
 from fastapi.openapi.utils import get_openapi
 from fastapi.responses import JSONResponse
+from redis.exceptions import RedisError
+from sqlalchemy.exc import IntegrityError
 
 from app.api.v1.router import api_router
 from app.core.config import settings
+from app.core.exceptions import AppError
+
+logger = logging.getLogger("step")
 
 app = FastAPI(title=settings.PROJECT_NAME, docs_url=None, redoc_url=None)
 
 app.include_router(api_router, prefix=settings.API_V1_PREFIX)
+
+
+# ---------- Gestion d'erreurs globale ----------
+
+@app.exception_handler(AppError)
+async def app_error_handler(request: Request, exc: AppError):
+    return JSONResponse(status_code=exc.status_code, content={"detail": exc.message})
+
+
+@app.exception_handler(IntegrityError)
+async def integrity_error_handler(request: Request, exc: IntegrityError):
+    # Filet de sécurité pour les races conditions (ex: deux inscriptions simultanées
+    # avec le même email) qui passent entre le SELECT de vérification et l'INSERT.
+    logger.warning("Contrainte d'intégrité violée sur %s : %s", request.url.path, exc)
+    return JSONResponse(status_code=409, content={"detail": "Conflit de données (doublon probable)"})
+
+
+@app.exception_handler(RedisError)
+async def redis_error_handler(request: Request, exc: RedisError):
+    logger.error("Erreur Redis sur %s : %s", request.url.path, exc)
+    return JSONResponse(status_code=503, content={"detail": "Service temporairement indisponible, réessayez"})
+
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception):
+    logger.exception("Erreur non gérée sur %s", request.url.path)
+    return JSONResponse(status_code=500, content={"detail": "Erreur interne du serveur"})
 
 
 def _end_user_openapi() -> dict:

@@ -4,20 +4,20 @@ import uuid
 from datetime import datetime, timedelta, timezone
 
 import jwt
-from passlib.context import CryptContext
+import bcrypt
 
 from app.core.config import settings
-
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 
 # ---------- Mots de passe ----------
 def hash_password(password: str) -> str:
-    return pwd_context.hash(password)
+    """Retourne le hash bcrypt d'un mot de passe."""
+    return bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
 
 
-def verify_password(password: str, password_hash: str) -> bool:
-    return pwd_context.verify(password, password_hash)
+def verify_password(plain_password: str, hashed_password: str) -> bool:
+    """Vérifie qu'un mot de passe correspond à son hash."""
+    return bcrypt.checkpw(plain_password.encode("utf-8"), hashed_password.encode("utf-8"))
 
 
 # ---------- Tokens d'application (secrets aléatoires Python) ----------

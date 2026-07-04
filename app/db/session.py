@@ -8,4 +8,10 @@ AsyncSessionLocal = async_sessionmaker(engine, expire_on_commit=False, class_=As
 
 async def get_db() -> AsyncSession:
     async with AsyncSessionLocal() as session:
-        yield session
+        try:
+            yield session
+        except Exception:
+            # Toute exception remontant depuis l'endpoint (IntegrityError, AppError...)
+            # doit annuler la transaction en cours avant de se propager plus haut.
+            await session.rollback()
+            raise
