@@ -5,12 +5,12 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
     # Général
-    PROJECT_NAME: str = "Keystone Auth"
+    PROJECT_NAME: str = "Step Auth as Service"
     API_V1_PREFIX: str = "/v1"
     ENVIRONMENT: str = "development"
 
     # Base de données
-    DATABASE_URL: str = "postgresql+asyncpg://keystone:keystone@localhost:5432/keystone"
+    DATABASE_URL: str
 
     # Redis (OTP + blacklist JWT)
     REDIS_URL: str = "redis://localhost:6379/0"
@@ -35,7 +35,7 @@ class Settings(BaseSettings):
     SMTP_PORT: int = 587
     SMTP_USER: str = ""
     SMTP_PASSWORD: str = ""
-    SMTP_FROM: str = "no-reply@keystone.dev"
+    SMTP_FROM: str = "no-reply@step.dev"
     SMTP_USE_TLS: bool = True
 
 
