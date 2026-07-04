@@ -13,7 +13,7 @@ app.include_router(api_router, prefix=settings.API_V1_PREFIX)
 
 def _end_user_openapi() -> dict:
     """Doc publique : uniquement les routes taguées end-user-auth, donnée aux développeurs."""
-    schema = get_openapi(title="Keystone — API End-Users", version="1.0.0", routes=app.routes)
+    schema = get_openapi(title="Step — API End-Users", version="1.0.0", routes=app.routes)
     schema["paths"] = {
         path: methods
         for path, methods in schema["paths"].items()
@@ -24,7 +24,7 @@ def _end_user_openapi() -> dict:
 
 def _admin_openapi() -> dict:
     """Doc complète, usage interne uniquement."""
-    return get_openapi(title="Keystone — API complète (admin)", version="1.0.0", routes=app.routes)
+    return get_openapi(title="Step — API complète (admin)", version="1.0.0", routes=app.routes)
 
 
 @app.get("/openapi-public.json", include_in_schema=False)
@@ -39,12 +39,12 @@ async def openapi_admin():
 
 @app.get("/docs", include_in_schema=False)
 async def public_docs():
-    return get_swagger_ui_html(openapi_url="/openapi-public.json", title="Keystone — API End-Users")
+    return get_swagger_ui_html(openapi_url="/openapi-public.json", title="Step — API End-Users")
 
 
 @app.get("/docs/admin", include_in_schema=False)
 async def admin_docs():
-    return get_swagger_ui_html(openapi_url="/openapi-admin.json", title="Keystone — API Admin")
+    return get_swagger_ui_html(openapi_url="/openapi-admin.json", title="Step — API Admin")
 
 
 @app.get("/health", tags=["health"])
