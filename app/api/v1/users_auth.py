@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, Header, HTTPException, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -9,6 +9,7 @@ from app.core.dependencies import (
     get_current_user,
 )
 from app.core.config import settings
+from app.core.rate_limiter import RateLimiter, get_client_ip
 from app.core.security import create_user_token, hash_password, verify_password
 from app.db.session import get_db
 from app.models.user import User
@@ -19,6 +20,9 @@ from app.services.audit_service import log_event
 from app.services.otp_service import issue_otp, verify_otp
 
 router = APIRouter(prefix="/users/auth", tags=["user-auth"])
+
+login_ip_limiter = RateLimiter("login_ip_user", max_attempts=20, window_seconds=900)
+login_email_limiter = RateLimiter("login_email_user", max_attempts=5, window_seconds=900)
 
 
 @router.post("/register", response_model=UserRead, status_code=status.HTTP_201_CREATED)
@@ -41,14 +45,25 @@ async def register(payload: UserCreate, db: AsyncSession = Depends(get_db)):
 
 
 @router.post("/login", response_model=MessageResponse)
-async def login(payload: LoginRequest, db: AsyncSession = Depends(get_db)):
+async def login(payload: LoginRequest, request: Request, db: AsyncSession = Depends(get_db)):
+    client_ip = get_client_ip(request)
+    email_key = payload.email.lower()
+
+    await login_ip_limiter.check(client_ip)
+    await login_email_limiter.check(email_key)
+
     result = await db.execute(select(User).where(User.email == payload.email))
     user = result.scalar_one_or_none()
 
     if not user or not verify_password(payload.password, user.password_hash):
+        await login_ip_limiter.register_failure(client_ip)
+        await login_email_limiter.register_failure(email_key)
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Email ou mot de passe incorrect")
     if not user.is_active:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Compte désactivé")
+
+    await login_ip_limiter.reset(client_ip)
+    await login_email_limiter.reset(email_key)
 
     await issue_otp("user", str(user.id), user.email, purpose="login_mfa")
     await log_event(db, "user", "otp_requested", actor_id=user.id)

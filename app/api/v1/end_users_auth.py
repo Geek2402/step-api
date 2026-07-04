@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, Header, HTTPException, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -10,6 +10,7 @@ from app.core.dependencies import (
     get_current_app,
     get_current_end_user,
 )
+from app.core.rate_limiter import RateLimiter, get_client_ip
 from app.core.security import create_end_user_token, hash_password, verify_password
 from app.db.session import get_db
 from app.models.app import App
@@ -21,6 +22,9 @@ from app.services.audit_service import log_event
 from app.services.otp_service import issue_otp, verify_otp
 
 router = APIRouter(prefix="/end-users/auth", tags=["end-user-auth"])
+
+login_ip_limiter = RateLimiter("login_ip_enduser", max_attempts=20, window_seconds=900)
+login_email_limiter = RateLimiter("login_email_enduser", max_attempts=5, window_seconds=900)
 
 
 @router.post("/register", response_model=EndUserRead, status_code=status.HTTP_201_CREATED)
@@ -54,18 +58,33 @@ async def register(
 @router.post("/login", response_model=MessageResponse)
 async def login(
     payload: LoginRequest,
+    request: Request,
     app: App = Depends(get_current_app),
     db: AsyncSession = Depends(get_db),
 ):
+    client_ip = get_client_ip(request)
+    # Clé composite app_id + email : un même email peut exister sur
+    # plusieurs apps, il ne faut pas mélanger leurs compteurs.
+    email_key = f"{app.id}:{payload.email.lower()}"
+    ip_key = f"{app.id}:{client_ip}"
+
+    await login_ip_limiter.check(ip_key)
+    await login_email_limiter.check(email_key)
+
     result = await db.execute(
         select(EndUser).where(EndUser.app_id == app.id, EndUser.email == payload.email)
     )
     end_user = result.scalar_one_or_none()
 
     if not end_user or not verify_password(payload.password, end_user.password_hash):
+        await login_ip_limiter.register_failure(ip_key)
+        await login_email_limiter.register_failure(email_key)
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Email ou mot de passe incorrect")
     if not end_user.is_active:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Compte désactivé")
+
+    await login_ip_limiter.reset(ip_key)
+    await login_email_limiter.reset(email_key)
 
     await issue_otp("end_user", str(end_user.id), end_user.email, purpose="login_mfa")
     await log_event(db, "end_user", "otp_requested", actor_id=end_user.id, app_id=app.id)
