@@ -10,6 +10,13 @@ class EndUserCreate(BaseModel):
     password: str
 
 
+class EndUserUpdate(BaseModel):
+    first_name: str | None = None
+    last_name: str | None = None
+    email: EmailStr | None = None
+    password: str | None = None
+
+
 class EndUserRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

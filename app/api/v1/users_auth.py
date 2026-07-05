@@ -6,7 +6,6 @@ from app.core.dependencies import (
     blacklist_token,
     decode_and_check_blacklist,
     extract_bearer_token,
-    get_current_user,
 )
 from app.core.config import settings
 from app.core.email_client import send_reset_password_email
@@ -23,7 +22,6 @@ from app.schemas.auth import (
     VerifyOtpRequest,
 )
 from app.schemas.token import UserTokenResponse
-from app.schemas.user import UserCreate, UserRead
 from app.services.audit_service import log_event
 from app.services.otp_service import issue_otp, verify_otp
 from app.services.password_reset_service import (
@@ -38,25 +36,6 @@ router = APIRouter(prefix="/users/auth", tags=["user-auth"])
 
 login_ip_limiter = RateLimiter("login_ip_user", max_attempts=20, window_seconds=900)
 login_email_limiter = RateLimiter("login_email_user", max_attempts=5, window_seconds=900)
-
-
-@router.post("/register", response_model=UserRead, status_code=status.HTTP_201_CREATED)
-async def register(payload: UserCreate, db: AsyncSession = Depends(get_db)):
-    existing = await db.execute(select(User).where(User.email == payload.email))
-    if existing.scalar_one_or_none():
-        raise HTTPException(status.HTTP_409_CONFLICT, "Un compte existe déjà avec cet email")
-
-    user = User(
-        first_name=payload.first_name,
-        last_name=payload.last_name,
-        email=payload.email,
-        password_hash=hash_password(payload.password),
-    )
-    db.add(user)
-    await db.commit()
-    await db.refresh(user)
-    await log_event(db, "user", "user_registered", actor_id=user.id)
-    return user
 
 
 @router.post("/login", response_model=MessageResponse)

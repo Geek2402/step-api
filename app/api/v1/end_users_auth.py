@@ -8,7 +8,6 @@ from app.core.dependencies import (
     decode_and_check_blacklist,
     extract_bearer_token,
     get_current_app,
-    get_current_end_user,
 )
 from app.core.email_client import send_reset_password_email
 from app.core.exceptions import EmailDeliveryError
@@ -24,7 +23,6 @@ from app.schemas.auth import (
     ResetPasswordRequest,
     VerifyOtpRequest,
 )
-from app.schemas.end_user import EndUserCreate, EndUserRead
 from app.schemas.token import EndUserTokenResponse
 from app.services.audit_service import log_event
 from app.services.otp_service import issue_otp, verify_otp
@@ -40,34 +38,6 @@ router = APIRouter(prefix="/end-users/auth", tags=["end-user-auth"])
 
 login_ip_limiter = RateLimiter("login_ip_enduser", max_attempts=20, window_seconds=900)
 login_email_limiter = RateLimiter("login_email_enduser", max_attempts=5, window_seconds=900)
-
-
-@router.post("/register", response_model=EndUserRead, status_code=status.HTTP_201_CREATED)
-async def register(
-    payload: EndUserCreate,
-    app: App = Depends(get_current_app),
-    db: AsyncSession = Depends(get_db),
-):
-    existing = await db.execute(
-        select(EndUser).where(EndUser.app_id == app.id, EndUser.email == payload.email)
-    )
-    if existing.scalar_one_or_none():
-        raise HTTPException(
-            status.HTTP_409_CONFLICT, "Un utilisateur existe déjà avec cet email pour cette application"
-        )
-
-    end_user = EndUser(
-        app_id=app.id,
-        first_name=payload.first_name,
-        last_name=payload.last_name,
-        email=payload.email,
-        password_hash=hash_password(payload.password),
-    )
-    db.add(end_user)
-    await db.commit()
-    await db.refresh(end_user)
-    await log_event(db, "end_user", "end_user_registered", actor_id=end_user.id, app_id=app.id)
-    return end_user
 
 
 @router.post("/login", response_model=MessageResponse)
@@ -142,11 +112,6 @@ async def logout(
     payload = await decode_and_check_blacklist(token, settings.JWT_SECRET_END_USERS)
     await blacklist_token(payload)
     return MessageResponse(message="Déconnecté")
-
-
-@router.get("/me", response_model=EndUserRead)
-async def me(end_user: EndUser = Depends(get_current_end_user)):
-    return end_user
 
 
 @router.post("/forgot-password", response_model=MessageResponse)
