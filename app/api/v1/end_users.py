@@ -1,10 +1,15 @@
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, Header, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.dependencies import get_current_app, get_current_end_user
+from app.core.dependencies import (
+    authorize_end_user_access,
+    get_current_app,
+    get_current_end_user,
+    require_app_owner_or_admin,
+)
 from app.core.security import hash_password
 from app.db.session import get_db
 from app.models.app import App
@@ -59,16 +64,23 @@ async def me(end_user: EndUser = Depends(get_current_end_user)):
 
 
 @router.get("", response_model=list[EndUserRead])
-async def list_end_users(app: App = Depends(get_current_app), db: AsyncSession = Depends(get_db)):
+async def list_end_users(
+    app: App = Depends(require_app_owner_or_admin), db: AsyncSession = Depends(get_db)
+):
     result = await db.execute(select(EndUser).where(EndUser.app_id == app.id))
     return result.scalars().all()
 
 
 @router.get("/{end_user_id}", response_model=EndUserRead)
 async def get_end_user(
-    end_user_id: uuid.UUID, app: App = Depends(get_current_app), db: AsyncSession = Depends(get_db)
+    end_user_id: uuid.UUID,
+    app: App = Depends(get_current_app),
+    authorization: str | None = Header(default=None),
+    db: AsyncSession = Depends(get_db),
 ):
-    return await _get_owned_end_user(end_user_id, app, db)
+    end_user = await _get_owned_end_user(end_user_id, app, db)
+    await authorize_end_user_access(end_user, app, authorization, db)
+    return end_user
 
 
 @router.patch("/{end_user_id}", response_model=EndUserRead)
@@ -76,9 +88,11 @@ async def update_end_user(
     end_user_id: uuid.UUID,
     payload: EndUserUpdate,
     app: App = Depends(get_current_app),
+    authorization: str | None = Header(default=None),
     db: AsyncSession = Depends(get_db),
 ):
     end_user = await _get_owned_end_user(end_user_id, app, db)
+    await authorize_end_user_access(end_user, app, authorization, db)
 
     if payload.email is not None and payload.email != end_user.email:
         existing = await db.execute(
@@ -104,9 +118,13 @@ async def update_end_user(
 
 @router.delete("/{end_user_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_end_user(
-    end_user_id: uuid.UUID, app: App = Depends(get_current_app), db: AsyncSession = Depends(get_db)
+    end_user_id: uuid.UUID,
+    app: App = Depends(get_current_app),
+    authorization: str | None = Header(default=None),
+    db: AsyncSession = Depends(get_db),
 ):
     end_user = await _get_owned_end_user(end_user_id, app, db)
+    await authorize_end_user_access(end_user, app, authorization, db)
     end_user_id_for_log = end_user.id
     await db.delete(end_user)
     await db.commit()
@@ -115,7 +133,9 @@ async def delete_end_user(
 
 @router.post("/{end_user_id}/activate", response_model=EndUserRead)
 async def activate_end_user(
-    end_user_id: uuid.UUID, app: App = Depends(get_current_app), db: AsyncSession = Depends(get_db)
+    end_user_id: uuid.UUID,
+    app: App = Depends(require_app_owner_or_admin),
+    db: AsyncSession = Depends(get_db),
 ):
     end_user = await _get_owned_end_user(end_user_id, app, db)
     end_user.is_active = True
@@ -127,7 +147,9 @@ async def activate_end_user(
 
 @router.post("/{end_user_id}/deactivate", response_model=EndUserRead)
 async def deactivate_end_user(
-    end_user_id: uuid.UUID, app: App = Depends(get_current_app), db: AsyncSession = Depends(get_db)
+    end_user_id: uuid.UUID,
+    app: App = Depends(require_app_owner_or_admin),
+    db: AsyncSession = Depends(get_db),
 ):
     end_user = await _get_owned_end_user(end_user_id, app, db)
     end_user.is_active = False

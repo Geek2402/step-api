@@ -19,7 +19,8 @@ def _to_created(app: App, token: str) -> AppCreated:
     return AppCreated(
         id=app.id,
         name=app.name,
-        token_prefix=app.token_prefix,        frontend_url=app.frontend_url,
+        token_prefix=app.token_prefix,
+        frontend_url=app.frontend_url,
         is_active=app.is_active,
         created_at=app.created_at,
         token=token,
@@ -48,8 +49,16 @@ async def create_app(
 
 
 @router.get("", response_model=list[AppRead])
-async def list_apps(user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
-    query = select(App) if user.is_admin else select(App).where(App.owner_id == user.id)
+async def list_apps(
+    mine: bool = False, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)
+):
+    # Un admin voit toutes les apps par défaut ; ?mine=true restreint aux siennes.
+    # Un non-admin ne voit toujours que les siennes, quel que soit ce paramètre.
+    query = (
+        select(App)
+        if user.is_admin and not mine
+        else select(App).where(App.owner_id == user.id)
+    )
     result = await db.execute(query)
     return result.scalars().all()
 

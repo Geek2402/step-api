@@ -50,6 +50,12 @@ async def me(user: User = Depends(get_current_user)):
     return user
 
 
+@router.get("", response_model=list[UserRead])
+async def list_users(_: User = Depends(require_admin), db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(User))
+    return result.scalars().all()
+
+
 @router.get("/{user_id}", response_model=UserRead)
 async def get_user(
     user_id: uuid.UUID, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)
