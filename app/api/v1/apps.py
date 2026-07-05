@@ -19,7 +19,7 @@ def _to_created(app: App, token: str) -> AppCreated:
     return AppCreated(
         id=app.id,
         name=app.name,
-        token_prefix=app.token_prefix,
+        token_prefix=app.token_prefix,        frontend_url=app.frontend_url,
         is_active=app.is_active,
         created_at=app.created_at,
         token=token,
@@ -102,10 +102,35 @@ async def rotate_token(
 
 
 @router.delete("/{app_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_app(
+    app_id: uuid.UUID, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)
+):
+    app = await _get_owned_app(app_id, user, db)
+    app_id_for_log = app.id
+    await db.delete(app)
+    await db.commit()
+    await log_event(db, "user", "app_deleted", actor_id=user.id, app_id=app_id_for_log)
+
+
+@router.post("/{app_id}/activate", response_model=AppRead)
+async def activate_app(
+    app_id: uuid.UUID, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)
+):
+    app = await _get_owned_app(app_id, user, db)
+    app.is_active = True
+    await db.commit()
+    await db.refresh(app)
+    await log_event(db, "user", "app_activated", actor_id=user.id, app_id=app.id)
+    return app
+
+
+@router.post("/{app_id}/deactivate", response_model=AppRead)
 async def deactivate_app(
     app_id: uuid.UUID, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)
 ):
     app = await _get_owned_app(app_id, user, db)
     app.is_active = False
     await db.commit()
+    await db.refresh(app)
     await log_event(db, "user", "app_deactivated", actor_id=user.id, app_id=app.id)
+    return app
