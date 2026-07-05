@@ -48,6 +48,22 @@ async def unhandled_exception_handler(request: Request, exc: Exception):
 PUBLIC_TAGS = {"end-user-auth", "end-users"}
 
 
+def _collect_schema_refs(node) -> set[str]:
+    """Recursively collects component schema names referenced (directly or via
+    nested $ref) anywhere within the given OpenAPI fragment."""
+    refs: set[str] = set()
+    if isinstance(node, dict):
+        ref = node.get("$ref")
+        if isinstance(ref, str) and ref.startswith("#/components/schemas/"):
+            refs.add(ref.removeprefix("#/components/schemas/"))
+        for value in node.values():
+            refs |= _collect_schema_refs(value)
+    elif isinstance(node, list):
+        for item in node:
+            refs |= _collect_schema_refs(item)
+    return refs
+
+
 def _end_user_openapi() -> dict:
     """Public docs: end-user-auth (login/OTP) and end-users (CRUD) routes, given to integrating developers."""
     schema = get_openapi(title="Step — End-Users API", version="1.0.0", routes=app.routes)
@@ -56,6 +72,20 @@ def _end_user_openapi() -> dict:
         for path, methods in schema["paths"].items()
         if any(PUBLIC_TAGS & set(op.get("tags", [])) for op in methods.values())
     }
+
+    all_schemas = schema.get("components", {}).get("schemas", {})
+    used = _collect_schema_refs(schema["paths"])
+    # Transitive closure: a referenced schema can itself reference other schemas.
+    frontier = set(used)
+    while frontier:
+        frontier = _collect_schema_refs({name: all_schemas[name] for name in frontier if name in all_schemas}) - used
+        used |= frontier
+
+    if "components" in schema and "schemas" in schema["components"]:
+        schema["components"]["schemas"] = {
+            name: definition for name, definition in all_schemas.items() if name in used
+        }
+
     return schema
 
 
