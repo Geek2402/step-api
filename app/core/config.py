@@ -9,6 +9,10 @@ class Settings(BaseSettings):
     API_V1_PREFIX: str = "/v1"
     ENVIRONMENT: str = "development"
 
+    # Frontend de la plateforme (pour les liens de reset password des Users).
+    # Vide = le forgot-password renvoie le token brut au lieu d'un lien.
+    FRONTEND_URL: str = ""
+
     # Base de données
     DATABASE_URL: str
 

@@ -9,15 +9,30 @@ from app.core.dependencies import (
     get_current_user,
 )
 from app.core.config import settings
+from app.core.email_client import send_reset_password_email
+from app.core.exceptions import EmailDeliveryError
 from app.core.rate_limiter import RateLimiter, get_client_ip
 from app.core.security import create_user_token, hash_password, verify_password
 from app.db.session import get_db
 from app.models.user import User
-from app.schemas.auth import LoginRequest, MessageResponse, VerifyOtpRequest
+from app.schemas.auth import (
+    ForgotPasswordRequest,
+    LoginRequest,
+    MessageResponse,
+    ResetPasswordRequest,
+    VerifyOtpRequest,
+)
 from app.schemas.token import UserTokenResponse
 from app.schemas.user import UserCreate, UserRead
 from app.services.audit_service import log_event
 from app.services.otp_service import issue_otp, verify_otp
+from app.services.password_reset_service import (
+    RESET_TOKEN_TTL_SECONDS,
+    build_reset_link,
+    create_reset_token,
+    delete_reset_token,
+    verify_reset_token,
+)
 
 router = APIRouter(prefix="/users/auth", tags=["user-auth"])
 
@@ -99,6 +114,38 @@ async def logout(authorization: str | None = Header(default=None)):
     return MessageResponse(message="Déconnecté")
 
 
-@router.get("/me", response_model=UserRead)
-async def me(user: User = Depends(get_current_user)):
-    return user
+@router.post("/forgot-password", response_model=MessageResponse)
+async def forgot_password(payload: ForgotPasswordRequest, db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(User).where(User.email == payload.email))
+    user = result.scalar_one_or_none()
+
+    if user and user.is_active:
+        token = await create_reset_token("user", user.email)
+        reset_value = (
+            build_reset_link(settings.FRONTEND_URL, user.email, token)
+            if settings.FRONTEND_URL
+            else token
+        )
+        try:
+            await send_reset_password_email(user.email, reset_value, RESET_TOKEN_TTL_SECONDS // 60)
+        except Exception as exc:
+            raise EmailDeliveryError() from exc
+        await log_event(db, "user", "password_reset_requested", actor_id=user.id)
+
+    return MessageResponse(message="Si cet email existe, un lien de réinitialisation a été envoyé")
+
+
+@router.post("/reset-password", response_model=MessageResponse)
+async def reset_password(payload: ResetPasswordRequest, db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(User).where(User.email == payload.email))
+    user = result.scalar_one_or_none()
+
+    if not user or not await verify_reset_token("user", user.email, payload.token):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Lien de réinitialisation invalide ou expiré")
+
+    user.password_hash = hash_password(payload.new_password)
+    await db.commit()
+    await delete_reset_token("user", user.email)
+    await log_event(db, "user", "password_reset_completed", actor_id=user.id)
+    return MessageResponse(message="Mot de passe mis à jour avec succès")
+

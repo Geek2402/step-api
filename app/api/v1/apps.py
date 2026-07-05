@@ -9,7 +9,7 @@ from app.core.security import generate_app_token
 from app.db.session import get_db
 from app.models.app import App
 from app.models.user import User
-from app.schemas.app import AppCreate, AppCreated, AppRead
+from app.schemas.app import AppCreate, AppCreated, AppRead, AppUpdate
 from app.services.audit_service import log_event
 
 router = APIRouter(prefix="/apps", tags=["apps"])
@@ -33,7 +33,13 @@ async def create_app(
     db: AsyncSession = Depends(get_db),
 ):
     token, prefix, token_hash = generate_app_token()
-    app = App(owner_id=user.id, name=payload.name, token_hash=token_hash, token_prefix=prefix)
+    app = App(
+        owner_id=user.id,
+        name=payload.name,
+        token_hash=token_hash,
+        token_prefix=prefix,
+        frontend_url=payload.frontend_url,
+    )
     db.add(app)
     await db.commit()
     await db.refresh(app)
@@ -58,6 +64,26 @@ async def _get_owned_app(app_id: uuid.UUID, user: User, db: AsyncSession) -> App
 @router.get("/{app_id}", response_model=AppRead)
 async def get_app(app_id: uuid.UUID, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     return await _get_owned_app(app_id, user, db)
+
+
+@router.patch("/{app_id}", response_model=AppRead)
+async def update_app(
+    app_id: uuid.UUID,
+    payload: AppUpdate,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    app = await _get_owned_app(app_id, user, db)
+
+    if payload.name is not None:
+        app.name = payload.name
+    if payload.frontend_url is not None:
+        app.frontend_url = payload.frontend_url or None
+
+    await db.commit()
+    await db.refresh(app)
+    await log_event(db, "user", "app_updated", actor_id=user.id, app_id=app.id)
+    return app
 
 
 @router.post("/{app_id}/rotate-token", response_model=AppCreated)

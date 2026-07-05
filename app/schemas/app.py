@@ -6,6 +6,12 @@ from pydantic import BaseModel, ConfigDict
 
 class AppCreate(BaseModel):
     name: str
+    frontend_url: str | None = None
+
+
+class AppUpdate(BaseModel):
+    name: str | None = None
+    frontend_url: str | None = None
 
 
 class AppRead(BaseModel):
@@ -14,6 +20,7 @@ class AppRead(BaseModel):
     id: uuid.UUID
     name: str
     token_prefix: str
+    frontend_url: str | None
     is_active: bool
     created_at: datetime
 

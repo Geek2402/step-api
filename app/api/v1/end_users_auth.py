@@ -10,16 +10,31 @@ from app.core.dependencies import (
     get_current_app,
     get_current_end_user,
 )
+from app.core.email_client import send_reset_password_email
+from app.core.exceptions import EmailDeliveryError
 from app.core.rate_limiter import RateLimiter, get_client_ip
 from app.core.security import create_end_user_token, hash_password, verify_password
 from app.db.session import get_db
 from app.models.app import App
 from app.models.end_user import EndUser
-from app.schemas.auth import LoginRequest, MessageResponse, VerifyOtpRequest
+from app.schemas.auth import (
+    ForgotPasswordRequest,
+    LoginRequest,
+    MessageResponse,
+    ResetPasswordRequest,
+    VerifyOtpRequest,
+)
 from app.schemas.end_user import EndUserCreate, EndUserRead
 from app.schemas.token import EndUserTokenResponse
 from app.services.audit_service import log_event
 from app.services.otp_service import issue_otp, verify_otp
+from app.services.password_reset_service import (
+    RESET_TOKEN_TTL_SECONDS,
+    build_reset_link,
+    create_reset_token,
+    delete_reset_token,
+    verify_reset_token,
+)
 
 router = APIRouter(prefix="/end-users/auth", tags=["end-user-auth"])
 
@@ -132,3 +147,53 @@ async def logout(
 @router.get("/me", response_model=EndUserRead)
 async def me(end_user: EndUser = Depends(get_current_end_user)):
     return end_user
+
+
+@router.post("/forgot-password", response_model=MessageResponse)
+async def forgot_password(
+    payload: ForgotPasswordRequest,
+    app: App = Depends(get_current_app),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(
+        select(EndUser).where(EndUser.app_id == app.id, EndUser.email == payload.email)
+    )
+    end_user = result.scalar_one_or_none()
+
+    if end_user and end_user.is_active:
+        identifier = f"{app.id}:{end_user.email}"
+        token = await create_reset_token("end_user", identifier)
+        reset_value = (
+            build_reset_link(app.frontend_url, end_user.email, token)
+            if app.frontend_url
+            else token
+        )
+        try:
+            await send_reset_password_email(end_user.email, reset_value, RESET_TOKEN_TTL_SECONDS // 60)
+        except Exception as exc:
+            raise EmailDeliveryError() from exc
+        await log_event(db, "end_user", "password_reset_requested", actor_id=end_user.id, app_id=app.id)
+
+    return MessageResponse(message="Si cet email existe, un lien de réinitialisation a été envoyé")
+
+
+@router.post("/reset-password", response_model=MessageResponse)
+async def reset_password(
+    payload: ResetPasswordRequest,
+    app: App = Depends(get_current_app),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(
+        select(EndUser).where(EndUser.app_id == app.id, EndUser.email == payload.email)
+    )
+    end_user = result.scalar_one_or_none()
+    identifier = f"{app.id}:{payload.email}"
+
+    if not end_user or not await verify_reset_token("end_user", identifier, payload.token):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Lien de réinitialisation invalide ou expiré")
+
+    end_user.password_hash = hash_password(payload.new_password)
+    await db.commit()
+    await delete_reset_token("end_user", identifier)
+    await log_event(db, "end_user", "password_reset_completed", actor_id=end_user.id, app_id=app.id)
+    return MessageResponse(message="Mot de passe mis à jour avec succès")
