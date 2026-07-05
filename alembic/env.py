@@ -11,25 +11,25 @@ from sqlalchemy.engine import Connection
 
 from app.core.config import settings
 from app.db.base import Base
-from app.models import App, AuditLog, EndUser, User  # noqa: F401 — nécessaire pour l'autogenerate
+from app.models import App, AuditLog, EndUser, User  # noqa: F401 — required for autogenerate
 
-# Config Alembic
+# Alembic config
 config = context.config
 
-# Configure les logs depuis alembic.ini
+# Configure logging from alembic.ini
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
-# Métadonnées cibles pour les migrations auto-générées
+# Target metadata for auto-generated migrations
 target_metadata = Base.metadata
 
-# NE PAS utiliser config.set_main_option() car configparser
-# interprète les % comme des caractères d'interpolation.
-# On passe l'URL directement au moteur à la place.
+# DO NOT use config.set_main_option() because configparser
+# interprets % as interpolation characters.
+# We pass the URL directly to the engine instead.
 
 
 def run_migrations_offline() -> None:
-    """Mode offline : génère le SQL sans connexion DB."""
+    """Offline mode: generates SQL without a DB connection."""
     context.configure(
         url=settings.DATABASE_URL,
         target_metadata=target_metadata,
@@ -47,9 +47,9 @@ def do_run_migrations(connection: Connection) -> None:
 
 
 async def run_async_migrations() -> None:
-    """Mode online : migrations async sur PostgreSQL."""
-    # On crée le moteur directement avec l'URL depuis settings
-    # pour éviter le problème des % dans configparser
+    """Online mode: async migrations against PostgreSQL."""
+    # We create the engine directly with the URL from settings
+    # to avoid the % issue in configparser
     from sqlalchemy.ext.asyncio import create_async_engine
     connectable = create_async_engine(
         settings.DATABASE_URL,

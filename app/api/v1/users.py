@@ -22,13 +22,13 @@ async def _check_self_or_admin(target_id: uuid.UUID, user: User, db: AsyncSessio
             db, ActorType.USER, AuditEventType.ACCESS_DENIED, actor_id=user.id,
             metadata={"reason": "not_self_or_admin", "target_user_id": str(target_id), "action": action},
         )
-        raise HTTPException(status.HTTP_403_FORBIDDEN, "Accès non autorisé à cet utilisateur")
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Access to this user is not authorized")
 
 
 async def _get_user_or_404(user_id: uuid.UUID, db: AsyncSession) -> User:
     target = await db.get(User, user_id)
     if not target:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Utilisateur introuvable")
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "User not found")
     return target
 
 
@@ -36,7 +36,7 @@ async def _get_user_or_404(user_id: uuid.UUID, db: AsyncSession) -> User:
 async def register(payload: UserCreate, db: AsyncSession = Depends(get_db)):
     existing = await db.execute(select(User).where(User.email == payload.email))
     if existing.scalar_one_or_none():
-        raise HTTPException(status.HTTP_409_CONFLICT, "Un compte existe déjà avec cet email")
+        raise HTTPException(status.HTTP_409_CONFLICT, "An account already exists with this email")
 
     user = User(
         first_name=payload.first_name,
@@ -99,7 +99,7 @@ async def update_user(
     if payload.email is not None and payload.email != target.email:
         existing = await db.execute(select(User).where(User.email == payload.email))
         if existing.scalar_one_or_none():
-            raise HTTPException(status.HTTP_409_CONFLICT, "Un compte existe déjà avec cet email")
+            raise HTTPException(status.HTTP_409_CONFLICT, "An account already exists with this email")
         target.email = payload.email
     if payload.first_name is not None:
         target.first_name = payload.first_name

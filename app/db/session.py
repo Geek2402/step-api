@@ -11,7 +11,7 @@ async def get_db() -> AsyncSession:
         try:
             yield session
         except Exception:
-            # Toute exception remontant depuis l'endpoint (IntegrityError, AppError...)
-            # doit annuler la transaction en cours avant de se propager plus haut.
+            # Any exception propagating up from the endpoint (IntegrityError, AppError...)
+            # must roll back the current transaction before it propagates further.
             await session.rollback()
             raise

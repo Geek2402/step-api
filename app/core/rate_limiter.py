@@ -4,9 +4,9 @@ from app.core.redis_client import redis_client
 
 
 def get_client_ip(request: Request) -> str:
-    """Récupère l'IP réelle du client même derrière un reverse proxy
-    (Nginx, Coolify, Dokku...). X-Forwarded-For peut contenir une liste
-    IP1, IP2, ... — la première est celle du client d'origine."""
+    """Retrieves the client's real IP even behind a reverse proxy
+    (Nginx, Coolify, Dokku...). X-Forwarded-For may contain a list
+    IP1, IP2, ... — the first one is the originating client's."""
     forwarded = request.headers.get("x-forwarded-for")
     if forwarded:
         return forwarded.split(",")[0].strip()
@@ -14,13 +14,13 @@ def get_client_ip(request: Request) -> str:
 
 
 class RateLimiter:
-    """Limiteur générique à fenêtre fixe, basé sur un compteur Redis.
+    """Generic fixed-window limiter backed by a Redis counter.
 
-    Usage :
+    Usage:
         limiter = RateLimiter("login_email", max_attempts=5, window_seconds=900)
-        await limiter.check(identifier)          # lève 429 si dépassé
-        await limiter.register_failure(identifier)  # à appeler sur échec
-        await limiter.reset(identifier)              # à appeler sur succès
+        await limiter.check(identifier)          # raises 429 if exceeded
+        await limiter.register_failure(identifier)  # call on failure
+        await limiter.reset(identifier)              # call on success
     """
 
     def __init__(self, key_prefix: str, max_attempts: int, window_seconds: int):
@@ -41,7 +41,7 @@ class RateLimiter:
             retry_after = ttl if ttl and ttl > 0 else self.window_seconds
             raise HTTPException(
                 status.HTTP_429_TOO_MANY_REQUESTS,
-                detail=f"Trop de tentatives. Réessayez dans {retry_after} secondes.",
+                detail=f"Too many attempts. Please try again in {retry_after} seconds.",
                 headers={"Retry-After": str(retry_after)},
             )
 

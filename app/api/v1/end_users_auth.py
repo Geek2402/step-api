@@ -51,8 +51,8 @@ async def login(
     db: AsyncSession = Depends(get_db),
 ):
     client_ip = get_client_ip(request)
-    # Clé composite app_id + email : un même email peut exister sur
-    # plusieurs apps, il ne faut pas mélanger leurs compteurs.
+    # Composite key app_id + email: the same email can exist across
+    # several apps, their counters must not be mixed.
     email_key = f"{app.id}:{payload.email.lower()}"
     ip_key = f"{app.id}:{client_ip}"
 
@@ -79,20 +79,20 @@ async def login(
             actor_id=end_user.id if end_user else None, app_id=app.id,
             metadata={"email": payload.email, "reason": "invalid_credentials"},
         )
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Email ou mot de passe incorrect")
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Incorrect email or password")
     if not end_user.is_active:
         await log_event(
             db, ActorType.END_USER, AuditEventType.END_USER_LOGIN_FAILED, actor_id=end_user.id, app_id=app.id,
             metadata={"email": payload.email, "reason": "inactive_account"},
         )
-        raise HTTPException(status.HTTP_403_FORBIDDEN, "Compte désactivé")
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Account disabled")
 
     await login_ip_limiter.reset(ip_key)
     await login_email_limiter.reset(email_key)
 
     await issue_otp("end_user", str(end_user.id), end_user.email, purpose="login_mfa")
     await log_event(db, ActorType.END_USER, AuditEventType.END_USER_OTP_REQUESTED, actor_id=end_user.id, app_id=app.id)
-    return MessageResponse(message="Code de vérification envoyé par email")
+    return MessageResponse(message="Verification code sent by email")
 
 
 @router.post("/verify-otp", response_model=EndUserTokenResponse)
@@ -110,14 +110,14 @@ async def verify_otp_route(
             db, ActorType.END_USER, AuditEventType.END_USER_OTP_VERIFY_FAILED, app_id=app.id,
             metadata={"email": payload.email, "reason": "unknown_email"},
         )
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Email ou code invalide")
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid email or code")
 
     ok = await verify_otp("end_user", str(end_user.id), payload.code, purpose="login_mfa")
     if not ok:
         await log_event(
             db, ActorType.END_USER, AuditEventType.END_USER_OTP_VERIFY_FAILED, actor_id=end_user.id, app_id=app.id,
         )
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Code invalide ou expiré")
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid or expired code")
 
     if not end_user.is_verified:
         end_user.is_verified = True
@@ -141,7 +141,7 @@ async def logout(
     await log_event(
         db, ActorType.END_USER, AuditEventType.END_USER_LOGOUT, actor_id=uuid.UUID(payload["sub"]), app_id=app.id,
     )
-    return MessageResponse(message="Déconnecté")
+    return MessageResponse(message="Logged out")
 
 
 @router.post("/forgot-password", response_model=MessageResponse)
@@ -172,7 +172,7 @@ async def forgot_password(
             actor_id=end_user.id, app_id=app.id,
         )
 
-    return MessageResponse(message="Si cet email existe, un lien de réinitialisation a été envoyé")
+    return MessageResponse(message="If this email exists, a reset link has been sent")
 
 
 @router.post("/reset-password", response_model=MessageResponse)
@@ -193,7 +193,7 @@ async def reset_password(
             actor_id=end_user.id if end_user else None, app_id=app.id,
             metadata={"email": payload.email},
         )
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Lien de réinitialisation invalide ou expiré")
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Invalid or expired reset link")
 
     end_user.password_hash = hash_password(payload.new_password)
     await db.commit()
@@ -202,4 +202,4 @@ async def reset_password(
         db, ActorType.END_USER, AuditEventType.END_USER_PASSWORD_RESET_COMPLETED,
         actor_id=end_user.id, app_id=app.id,
     )
-    return MessageResponse(message="Mot de passe mis à jour avec succès")
+    return MessageResponse(message="Password updated successfully")

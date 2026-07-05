@@ -1,26 +1,25 @@
 """
-Script de test end-to-end pour l'API Step.
+End-to-end test script for the Step API.
 
-Lance sa propre instance uvicorn (port dédié, mode SMTP désactivé pour que
-les OTP / tokens de reset soient affichés dans les logs au lieu d'être
-envoyés par email réel), exécute une large batterie de tests HTTP couvrant
-toutes les routes, les protocoles de sécurité (JWT isolés User/EndUser,
-blacklist au logout, comptes désactivés, permissions owner/admin), le
-brute-force (rate limiting sur les routes de login) et la gestion d'erreurs
-(404/409/422/401/403/429).
+Starts its own uvicorn instance (dedicated port, SMTP mode disabled so that
+OTP / reset tokens are printed in the logs instead of being sent by real
+email), runs a large battery of HTTP tests covering all routes, security
+protocols (isolated User/EndUser JWTs, blacklist on logout, deactivated
+accounts, owner/admin permissions), brute-force protection (rate limiting on
+login routes), and error handling (404/409/422/401/403/429).
 
-Prérequis :
-- PostgreSQL et Redis démarrés, migrations appliquées (`alembic upgrade head`).
-- Dépendances du projet installées (`pip install -r requirements.txt`).
-- Lancer ce script depuis la racine du projet, avec le même interpréteur
-  Python que le venv du projet (il importe app.core.config et asyncpg).
+Requirements:
+- PostgreSQL and Redis running, migrations applied (`alembic upgrade head`).
+- Project dependencies installed (`pip install -r requirements.txt`).
+- Run this script from the project root, with the same Python interpreter
+  as the project venv (it imports app.core.config and asyncpg).
 
-Usage :
+Usage:
     python test_app.py
 
-Sortie :
-- Résultats affichés en temps réel dans le terminal.
-- Récap complet écrit dans test_report.md à la racine du projet.
+Output:
+- Results printed in real time in the terminal.
+- Full summary written to test_report.md at the project root.
 """
 
 import asyncio
@@ -47,7 +46,7 @@ API = f"{BASE_URL}/v1"
 REPORT_PATH = ROOT / "test_report.md"
 
 
-# ==================== Couleurs terminal ====================
+# ==================== Terminal colors ====================
 
 class C:
     GREEN = "\033[92m"
@@ -58,7 +57,7 @@ class C:
     RESET = "\033[0m"
 
 
-# ==================== Résultats ====================
+# ==================== Results ====================
 
 results = []  # [{section, name, passed, detail}]
 current_section = {"name": ""}
@@ -84,7 +83,7 @@ def info(message):
     print(f"  {C.YELLOW}i{C.RESET} {message}", flush=True)
 
 
-# ==================== Client HTTP minimal (stdlib) ====================
+# ==================== Minimal HTTP client (stdlib) ====================
 
 def http(method, path, json_body=None, headers=None, base=API):
     url = base + path
@@ -122,12 +121,12 @@ def app_token_header(token):
 
 
 def unique_email(prefix):
-    # Domaine réel (mailinator.com) pour passer la validation EmailStr de Pydantic —
-    # aucun email n'est réellement envoyé (SMTP_USER="" force le mode dev côté serveur).
+    # Real domain (mailinator.com) to pass Pydantic's EmailStr validation —
+    # no email is actually sent (SMTP_USER="" forces dev mode server-side).
     return f"{prefix}.{uuid.uuid4().hex[:10]}@mailinator.com"
 
 
-# ==================== Serveur (subprocess + capture des logs) ====================
+# ==================== Server (subprocess + log capture) ====================
 
 server_proc = None
 server_log_lines = []
@@ -143,8 +142,8 @@ def _pump_output(pipe):
 
 
 def _find_python() -> str:
-    """Utilise l'interpréteur du venv du projet s'il existe (là où fastapi/uvicorn
-    sont installés), sinon retombe sur celui qui exécute ce script."""
+    """Uses the project's venv interpreter if it exists (where fastapi/uvicorn
+    are installed), otherwise falls back to the one running this script."""
     candidates = [
         ROOT.parent / "env" / "Scripts" / "python.exe",
         ROOT.parent / "env" / "bin" / "python",
@@ -162,10 +161,10 @@ def _find_python() -> str:
 def start_server():
     global server_proc
     env = os.environ.copy()
-    env["SMTP_USER"] = ""  # force le mode dev : OTP/reset affichés dans les logs, pas d'email réel
-    env["PYTHONUNBUFFERED"] = "1"  # sinon les print() du serveur restent bufferisés dans le pipe
+    env["SMTP_USER"] = ""  # force dev mode: OTP/reset printed in logs, no real email
+    env["PYTHONUNBUFFERED"] = "1"  # otherwise the server's print() calls stay buffered in the pipe
     python = _find_python()
-    print(f"{C.CYAN}Interpréteur utilisé pour le serveur : {python}{C.RESET}", flush=True)
+    print(f"{C.CYAN}Interpreter used for the server: {python}{C.RESET}", flush=True)
     cmd = [python, "-m", "uvicorn", "app.main:app", "--host", HOST, "--port", str(PORT)]
     server_proc = subprocess.Popen(
         cmd,
@@ -178,16 +177,16 @@ def start_server():
     )
     threading.Thread(target=_pump_output, args=(server_proc.stdout,), daemon=True).start()
 
-    print(f"{C.CYAN}Démarrage du serveur de test sur {BASE_URL} ...{C.RESET}", flush=True)
+    print(f"{C.CYAN}Starting test server on {BASE_URL} ...{C.RESET}", flush=True)
     for _ in range(60):
         status, _, _ = http("GET", "/health", base=BASE_URL)
         if status == 200:
-            print(f"{C.GREEN}Serveur prêt.{C.RESET}", flush=True)
+            print(f"{C.GREEN}Server ready.{C.RESET}", flush=True)
             return
         time.sleep(0.5)
     raise RuntimeError(
-        "Le serveur de test n'a pas démarré à temps. Vérifiez que PostgreSQL/Redis "
-        "tournent et que les migrations sont appliquées (alembic upgrade head)."
+        "Test server did not start in time. Check that PostgreSQL/Redis are "
+        "running and migrations are applied (alembic upgrade head)."
     )
 
 
@@ -207,8 +206,8 @@ def log_cursor():
 
 
 def wait_for_marker(marker, after_index, timeout=5):
-    """Cherche une ligne '[DEV] ... marker ... : VALEUR' apparue après after_index
-    et retourne la valeur finale de la ligne (code OTP ou token de reset)."""
+    """Looks for a '[DEV] ... marker ... : VALUE' line appearing after after_index
+    and returns the line's final value (OTP code or reset token)."""
     deadline = time.time() + timeout
     while time.time() < deadline:
         with server_log_lock:
@@ -222,20 +221,20 @@ def wait_for_marker(marker, after_index, timeout=5):
     return None
 
 
-# ==================== Bootstrap admin (accès direct DB) ====================
-# Aucune route ne permet de créer le premier admin (promote-admin est réservé
-# aux admins) : on bascule is_admin=True directement en base pour amorcer les
-# tests des routes admin-only. Ce n'est pas un contournement testé — c'est un
-# prérequis d'amorçage, documenté comme tel.
+# ==================== Admin bootstrap (direct DB access) ====================
+# No route allows creating the first admin (promote-admin is restricted to
+# admins): we flip is_admin=True directly in the database to bootstrap the
+# admin-only route tests. This is not a bypass under test — it's a documented
+# bootstrap prerequisite.
 
 def _read_database_url() -> str:
-    """Lit DATABASE_URL depuis .env directement (regex), pour ne pas dépendre de
-    pydantic-settings dans l'interpréteur qui exécute ce script."""
+    """Reads DATABASE_URL directly from .env (regex), so as not to depend on
+    pydantic-settings in the interpreter running this script."""
     env_path = ROOT / ".env"
     text = env_path.read_text(encoding="utf-8")
     m = re.search(r"^DATABASE_URL=(.+)$", text, re.MULTILINE)
     if not m:
-        raise RuntimeError("DATABASE_URL introuvable dans .env")
+        raise RuntimeError("DATABASE_URL not found in .env")
     return m.group(1).strip()
 
 
@@ -254,7 +253,7 @@ def promote_admin_via_db(email: str) -> None:
     asyncio.run(_promote_admin_db(email))
 
 
-# ==================== Helpers de flow métier ====================
+# ==================== Business flow helpers ====================
 
 def register_user(prefix="user"):
     email = unique_email(prefix)
@@ -269,14 +268,14 @@ def register_user(prefix="user"):
 
 
 def login_and_verify_user(email, password):
-    """Flow complet login -> OTP (capturé dans les logs) -> verify-otp. Retourne (status, payload)."""
+    """Full login -> OTP (captured from the logs) -> verify-otp flow. Returns (status, payload)."""
     idx = log_cursor()
     status, payload, _ = http("POST", "/users/auth/login", {"email": email, "password": password})
     if status != 200:
         return status, payload
-    code = wait_for_marker(f"[DEV] OTP pour {email} (", idx)
+    code = wait_for_marker(f"[DEV] OTP for {email} (", idx)
     if code is None:
-        return None, "OTP introuvable dans les logs serveur"
+        return None, "OTP not found in server logs"
     status, payload, _ = http("POST", "/users/auth/verify-otp", {"email": email, "code": code})
     return status, payload
 
@@ -301,9 +300,9 @@ def login_and_verify_end_user(app_token, email, password):
     )
     if status != 200:
         return status, payload
-    code = wait_for_marker(f"[DEV] OTP pour {email} (", idx)
+    code = wait_for_marker(f"[DEV] OTP for {email} (", idx)
     if code is None:
-        return None, "OTP introuvable dans les logs serveur"
+        return None, "OTP not found in server logs"
     status, payload, _ = http(
         "POST", "/end-users/auth/verify-otp", {"email": email, "code": code},
         headers=app_token_header(app_token),
@@ -311,14 +310,14 @@ def login_and_verify_end_user(app_token, email, password):
     return status, payload
 
 
-# ==================== Suites de tests ====================
+# ==================== Test suites ====================
 
 created_user_ids = []
 created_app_ids = []
 
 
 def test_health_and_docs():
-    section("Health check & documentation Swagger")
+    section("Health check & Swagger documentation")
 
     status, payload, _ = http("GET", "/health", base=BASE_URL)
     check("GET /health -> 200", status == 200 and payload == {"status": "ok"}, f"status={status} body={payload}")
@@ -331,24 +330,24 @@ def test_health_and_docs():
 
     status, payload, _ = http("GET", "/openapi-public.json", base=BASE_URL)
     ok = status == 200 and isinstance(payload, dict) and "paths" in payload
-    check("GET /openapi-public.json -> 200 valide", ok, f"status={status}")
+    check("GET /openapi-public.json -> 200 valid", ok, f"status={status}")
     if ok:
         paths = payload["paths"]
         has_end_user_route = any("/end-users" in p for p in paths)
         has_user_auth_route = any(p.endswith("/users/auth/login") for p in paths)
-        check("doc publique contient les routes end-user", has_end_user_route)
-        check("doc publique NE contient PAS les routes user-auth (isolation)", not has_user_auth_route)
+        check("public doc contains end-user routes", has_end_user_route)
+        check("public doc does NOT contain user-auth routes (isolation)", not has_user_auth_route)
 
     status, payload, _ = http("GET", "/openapi-admin.json", base=BASE_URL)
     ok = status == 200 and isinstance(payload, dict) and "paths" in payload
-    check("GET /openapi-admin.json -> 200 valide", ok, f"status={status}")
+    check("GET /openapi-admin.json -> 200 valid", ok, f"status={status}")
     if ok:
         has_admin_route = any(p.endswith("/users/auth/login") for p in payload["paths"])
-        check("doc admin contient bien toutes les routes", has_admin_route)
+        check("admin doc contains all routes", has_admin_route)
 
 
 def test_users_crud_and_errors():
-    section("Users CRUD + erreurs")
+    section("Users CRUD + errors")
 
     status, payload, email, password = register_user("alice")
     ok = check("POST /users (register) -> 201", status == 201, f"status={status} body={payload}")
@@ -360,71 +359,71 @@ def test_users_crud_and_errors():
     status, payload, _ = http("POST", "/users", {
         "first_name": "Alice", "last_name": "Dup", "email": email, "password": password,
     })
-    check("POST /users email dupliqué -> 409", status == 409, f"status={status} body={payload}")
+    check("POST /users duplicate email -> 409", status == 409, f"status={status} body={payload}")
 
     status, payload, _ = http("POST", "/users", {
         "first_name": "X", "last_name": "Y", "email": "not-an-email", "password": "x",
     })
-    check("POST /users email invalide -> 422", status == 422, f"status={status} body={payload}")
+    check("POST /users invalid email -> 422", status == 422, f"status={status} body={payload}")
 
     status, payload = login_and_verify_user(email, password)
-    ok = check("login + verify-otp (mot de passe correct) -> 200 + token", status == 200 and payload and "access_token" in payload, f"status={status} body={payload}")
+    ok = check("login + verify-otp (correct password) -> 200 + token", status == 200 and payload and "access_token" in payload, f"status={status} body={payload}")
     if not ok:
         return None
     token = payload["access_token"]
 
     status, payload, _ = http("GET", "/users/me", headers=bearer(token))
-    check("GET /users/me avec token -> 200, email correct", status == 200 and payload.get("email") == email, f"status={status} body={payload}")
+    check("GET /users/me with token -> 200, correct email", status == 200 and payload.get("email") == email, f"status={status} body={payload}")
 
     status, _, _ = http("GET", "/users/me")
-    check("GET /users/me sans token -> 401", status == 401, f"status={status}")
+    check("GET /users/me without token -> 401", status == 401, f"status={status}")
 
     status, payload, _ = http("PATCH", f"/users/{user_id}", {"first_name": "AliceUpdated"}, headers=bearer(token))
-    check("PATCH /users/{self} -> 200, first_name mis à jour", status == 200 and payload.get("first_name") == "AliceUpdated", f"status={status} body={payload}")
+    check("PATCH /users/{self} -> 200, first_name updated", status == 200 and payload.get("first_name") == "AliceUpdated", f"status={status} body={payload}")
 
     status, _, _ = http("GET", "/users", headers=bearer(token))
-    check("GET /users (liste) en tant que non-admin -> 403", status == 403, f"status={status}")
+    check("GET /users (list) as non-admin -> 403", status == 403, f"status={status}")
 
     status, _, _ = http("POST", f"/users/{user_id}/promote-admin", headers=bearer(token))
-    check("POST /users/{id}/promote-admin en tant que non-admin -> 403", status == 403, f"status={status}")
+    check("POST /users/{id}/promote-admin as non-admin -> 403", status == 403, f"status={status}")
 
     status, payload, email2, password2 = register_user("bob")
-    check("register d'un 2e user -> 201", status == 201, f"status={status}")
+    check("register a 2nd user -> 201", status == 201, f"status={status}")
     user2_id = payload["id"] if status == 201 else None
     if user2_id:
         created_user_ids.append(user2_id)
         status, _, _ = http("GET", f"/users/{user2_id}", headers=bearer(token))
-        check("GET /users/{other_id} par un non-admin non-concerné -> 403", status == 403, f"status={status}")
+        check("GET /users/{other_id} by an unrelated non-admin -> 403", status == 403, f"status={status}")
 
     status, _, _ = http("GET", "/users/00000000-0000-0000-0000-000000000000", headers=bearer(token))
-    check("GET /users/{uuid inexistant} par un non-admin -> 403 (permission avant existence)", status == 403, f"status={status}")
+    check("GET /users/{nonexistent uuid} by a non-admin -> 403 (permission before existence)", status == 403, f"status={status}")
 
-    status, _, _ = http("GET", "/users/pas-un-uuid", headers=bearer(token))
-    check("GET /users/{uuid invalide} -> 422", status == 422, f"status={status}")
+    status, _, _ = http("GET", "/users/not-a-uuid", headers=bearer(token))
+    check("GET /users/{invalid uuid} -> 422", status == 422, f"status={status}")
 
     # forgot / reset password
     idx = log_cursor()
     status, payload, _ = http("POST", "/users/auth/forgot-password", {"email": email})
-    check("POST /users/auth/forgot-password (email existant) -> 200", status == 200, f"status={status}")
-    reset_token = wait_for_marker(f"[DEV] Reset password pour {email} :", idx)
-    check("token de reset trouvé dans les logs", reset_token is not None)
+    check("POST /users/auth/forgot-password (existing email) -> 200", status == 200, f"status={status}")
+    reset_token = wait_for_marker(f"[DEV] Password reset for {email}:", idx)
+    check("reset token found in logs", reset_token is not None)
 
     status, _, _ = http("POST", "/users/auth/forgot-password", {"email": unique_email("ghost")})
-    check("forgot-password (email inexistant) -> 200 (message neutre, pas de fuite)", status == 200, f"status={status}")
+    check("forgot-password (nonexistent email) -> 200 (neutral message, no leak)", status == 200, f"status={status}")
 
     if reset_token:
-        status, _, _ = http("POST", "/users/auth/reset-password", {"email": email, "token": "faux-token", "new_password": "Nouveau123!"})
-        check("reset-password avec mauvais token -> 400", status == 400, f"status={status}")
+        status, _, _ = http("POST", "/users/auth/reset-password", {"email": email, "token": "wrong-token", "new_password": "NewPass123!"})
+        check("reset-password with wrong token -> 400", status == 400, f"status={status}")
 
-        new_password = "Nouveau123!"
+        new_password = "NewPass123!"
         status, _, _ = http("POST", "/users/auth/reset-password", {"email": email, "token": reset_token, "new_password": new_password})
-        check("reset-password avec le bon token -> 200", status == 200, f"status={status}")
+        check("reset-password with the correct token -> 200", status == 200, f"status={status}")
 
         status, _ = login_and_verify_user(email, new_password)
-        check("login avec le nouveau mot de passe -> 200", status == 200, f"status={status}")
+        check("login with the new password -> 200", status == 200, f"status={status}")
 
         status, _ = login_and_verify_user(email, password)
-        check("login avec l'ancien mot de passe -> 401 (mot de passe changé)", status == 401, f"status={status}")
+        check("login with the old password -> 401 (password changed)", status == 401, f"status={status}")
         password = new_password
 
     # logout + blacklist
@@ -432,7 +431,7 @@ def test_users_crud_and_errors():
     check("POST /users/auth/logout -> 200", status == 200, f"status={status}")
 
     status, _, _ = http("GET", "/users/me", headers=bearer(token))
-    check("GET /users/me avec token révoqué (post-logout) -> 401", status == 401, f"status={status}")
+    check("GET /users/me with revoked token (post-logout) -> 401", status == 401, f"status={status}")
 
     return {
         "user_a": {"id": user_id, "email": email, "password": password},
@@ -441,50 +440,50 @@ def test_users_crud_and_errors():
 
 
 def test_admin_flows():
-    section("Bootstrap admin + routes admin-only")
+    section("Admin bootstrap + admin-only routes")
 
     status, payload, admin_email, admin_password = register_user("admin")
-    ok = check("register du futur admin -> 201", status == 201, f"status={status}")
+    ok = check("register future admin -> 201", status == 201, f"status={status}")
     if not ok:
         return None
     admin_id = payload["id"]
-    # Pas ajouté à created_user_ids : cleanup() supprime l'admin séparément, en
-    # dernier, pour ne pas invalider son propre token avant la fin du nettoyage.
+    # Not added to created_user_ids: cleanup() deletes the admin separately, last,
+    # so as not to invalidate its own token before cleanup finishes.
 
     promote_admin_via_db(admin_email)
-    info(f"is_admin=true positionné en base pour {admin_email} (amorçage, hors API)")
+    info(f"is_admin=true set in the database for {admin_email} (bootstrap, outside the API)")
 
     status, payload = login_and_verify_user(admin_email, admin_password)
-    ok = check("login admin -> 200 + token", status == 200 and payload and "access_token" in payload, f"status={status} body={payload}")
+    ok = check("admin login -> 200 + token", status == 200 and payload and "access_token" in payload, f"status={status} body={payload}")
     if not ok:
         return None
     admin_token = payload["access_token"]
-    check("le JWT reflète bien is_admin=true", payload["user"]["is_admin"] is True)
+    check("JWT correctly reflects is_admin=true", payload["user"]["is_admin"] is True)
 
     status, payload, _ = http("GET", "/users", headers=bearer(admin_token))
     check(
-        "GET /users (liste paginée) en tant qu'admin -> 200",
+        "GET /users (paginated list) as admin -> 200",
         status == 200 and isinstance(payload, dict) and isinstance(payload.get("items"), list) and "total" in payload,
         f"status={status} body={payload}",
     )
 
     status, _, _ = http("GET", "/users/00000000-0000-0000-0000-000000000000", headers=bearer(admin_token))
-    check("GET /users/{uuid inexistant} en tant qu'admin -> 404", status == 404, f"status={status}")
+    check("GET /users/{nonexistent uuid} as admin -> 404", status == 404, f"status={status}")
 
-    # throwaway user pour activate/deactivate/promote/demote/delete
+    # throwaway user for activate/deactivate/promote/demote/delete
     status, payload, thr_email, thr_password = register_user("throwaway")
     thr_id = payload["id"] if status == 201 else None
     if thr_id:
         created_user_ids.append(thr_id)
 
         status, _ = login_and_verify_user(thr_email, thr_password)
-        check("login normal avant désactivation -> 200", status == 200)
+        check("normal login before deactivation -> 200", status == 200)
 
         status, payload, _ = http("POST", f"/users/{thr_id}/deactivate", headers=bearer(admin_token))
         check("POST /users/{id}/deactivate (admin) -> 200", status == 200 and payload.get("is_active") is False, f"status={status}")
 
         status, payload, _ = http("POST", "/users/auth/login", {"email": thr_email, "password": thr_password})
-        check("login d'un compte désactivé -> 403", status == 403, f"status={status} body={payload}")
+        check("login of a deactivated account -> 403", status == 403, f"status={status} body={payload}")
 
         status, payload, _ = http("POST", f"/users/{thr_id}/activate", headers=bearer(admin_token))
         check("POST /users/{id}/activate (admin) -> 200", status == 200 and payload.get("is_active") is True, f"status={status}")
@@ -500,23 +499,23 @@ def test_admin_flows():
         created_user_ids.remove(thr_id)
 
         status, _, _ = http("GET", f"/users/{thr_id}", headers=bearer(admin_token))
-        check("GET /users/{id} après suppression -> 404", status == 404, f"status={status}")
+        check("GET /users/{id} after deletion -> 404", status == 404, f"status={status}")
 
     return {"id": admin_id, "email": admin_email, "password": admin_password, "token": admin_token}
 
 
 def test_apps_crud(users_ctx, admin_ctx):
-    section("Apps CRUD (permissions owner/admin)")
+    section("Apps CRUD (owner/admin permissions)")
 
     user_a = users_ctx["user_a"]
     status, payload = login_and_verify_user(user_a["email"], user_a["password"])
-    ok = check("re-login user A (token frais après logout précédent) -> 200", status == 200)
+    ok = check("re-login user A (fresh token after previous logout) -> 200", status == 200)
     if not ok:
         return None
     token_a = payload["access_token"]
 
     status, payload, _ = http("POST", "/apps", {"name": "App EndUsers Test"}, headers=bearer(token_a))
-    ok = check("POST /apps (création) -> 201 + token en clair", status == 201 and "token" in payload, f"status={status} body={payload}")
+    ok = check("POST /apps (creation) -> 201 + plaintext token", status == 201 and "token" in payload, f"status={status} body={payload}")
     if not ok:
         return None
     app_id = payload["id"]
@@ -525,7 +524,7 @@ def test_apps_crud(users_ctx, admin_ctx):
 
     status, payload, _ = http("GET", "/apps", headers=bearer(token_a))
     check(
-        "GET /apps (owner) -> 200, contient l'app créée",
+        "GET /apps (owner) -> 200, contains the created app",
         status == 200 and any(a["id"] == app_id for a in payload.get("items", [])),
         f"status={status}",
     )
@@ -537,56 +536,56 @@ def test_apps_crud(users_ctx, admin_ctx):
             token_b = payload["access_token"]
             status, payload, _ = http("GET", "/apps", headers=bearer(token_b))
             check(
-                "GET /apps (autre user, non owner) -> 200, liste vide",
+                "GET /apps (other user, not owner) -> 200, empty list",
                 status == 200 and payload.get("items") == [] and payload.get("total") == 0,
                 f"status={status} body={payload}",
             )
 
             status, _, _ = http("GET", f"/apps/{app_id}", headers=bearer(token_b))
-            check("GET /apps/{id} par un non-owner non-admin -> 404", status == 404, f"status={status}")
+            check("GET /apps/{id} by a non-owner non-admin -> 404", status == 404, f"status={status}")
 
             status, _, _ = http("PATCH", f"/apps/{app_id}", {"name": "Hacked"}, headers=bearer(token_b))
-            check("PATCH /apps/{id} par un non-owner -> 404", status == 404, f"status={status}")
+            check("PATCH /apps/{id} by a non-owner -> 404", status == 404, f"status={status}")
 
             status, _, _ = http("DELETE", f"/apps/{app_id}", headers=bearer(token_b))
-            check("DELETE /apps/{id} par un non-owner -> 404", status == 404, f"status={status}")
+            check("DELETE /apps/{id} by a non-owner -> 404", status == 404, f"status={status}")
 
     status, payload, _ = http("PATCH", f"/apps/{app_id}", {"name": "App EndUsers Test (renamed)"}, headers=bearer(token_a))
-    check("PATCH /apps/{id} par le owner -> 200, nom mis à jour", status == 200 and payload.get("name") == "App EndUsers Test (renamed)", f"status={status}")
+    check("PATCH /apps/{id} by the owner -> 200, name updated", status == 200 and payload.get("name") == "App EndUsers Test (renamed)", f"status={status}")
 
     admin_token = admin_ctx["token"] if admin_ctx else None
     if admin_token:
         status, payload, _ = http("GET", "/apps", headers=bearer(admin_token))
         check(
-            "GET /apps (admin, sans filtre) -> 200, contient toutes les apps",
+            "GET /apps (admin, no filter) -> 200, contains all apps",
             status == 200 and any(a["id"] == app_id for a in payload.get("items", [])),
             f"status={status}",
         )
 
         status, payload, _ = http("GET", "/apps?mine=true", headers=bearer(admin_token))
         check(
-            "GET /apps?mine=true (admin) -> 200, ne contient pas les apps d'autrui",
+            "GET /apps?mine=true (admin) -> 200, does not contain others' apps",
             status == 200 and not any(a["id"] == app_id for a in payload.get("items", [])),
             f"status={status}",
         )
 
         status, payload, _ = http("GET", "/apps?limit=1", headers=bearer(admin_token))
         check(
-            "GET /apps?limit=1 -> 200, respecte la limite et renvoie le total réel",
+            "GET /apps?limit=1 -> 200, respects the limit and returns the real total",
             status == 200 and len(payload.get("items", [])) == 1 and payload.get("limit") == 1 and payload.get("total", 0) >= 1,
             f"status={status} body={payload}",
         )
 
-    # App jetable pour les tests destructifs (rotate/deactivate/delete)
+    # Disposable app for destructive tests (rotate/deactivate/delete)
     status, payload, _ = http("POST", "/apps", {"name": "App Perm Test"}, headers=bearer(token_a))
-    ok = check("POST /apps (2e app jetable) -> 201", status == 201, f"status={status}")
+    ok = check("POST /apps (2nd disposable app) -> 201", status == 201, f"status={status}")
     disposable_app_id = payload["id"] if ok else None
     disposable_app_token = payload["token"] if ok else None
     if disposable_app_id:
         created_app_ids.append(disposable_app_id)
 
         status, payload, _ = http("POST", f"/apps/{disposable_app_id}/rotate-token", headers=bearer(token_a))
-        ok = check("POST /apps/{id}/rotate-token -> 200, nouveau token", status == 200 and payload.get("token") != disposable_app_token, f"status={status}")
+        ok = check("POST /apps/{id}/rotate-token -> 200, new token", status == 200 and payload.get("token") != disposable_app_token, f"status={status}")
         old_token = disposable_app_token
         if ok:
             disposable_app_token = payload["token"]
@@ -594,7 +593,7 @@ def test_apps_crud(users_ctx, admin_ctx):
         status, _, _ = http("POST", "/end-users", {
             "first_name": "X", "last_name": "Y", "email": unique_email("ru"), "password": "Aa1!aaaa",
         }, headers=app_token_header(old_token))
-        check("ancien token d'app révoqué après rotate-token -> 401", status == 401, f"status={status}")
+        check("old app token revoked after rotate-token -> 401", status == 401, f"status={status}")
 
         status, payload, _ = http("POST", f"/apps/{disposable_app_id}/deactivate", headers=bearer(token_a))
         check("POST /apps/{id}/deactivate -> 200", status == 200 and payload.get("is_active") is False, f"status={status}")
@@ -602,26 +601,26 @@ def test_apps_crud(users_ctx, admin_ctx):
         status, _, _ = http("POST", "/end-users", {
             "first_name": "X", "last_name": "Y", "email": unique_email("da"), "password": "Aa1!aaaa",
         }, headers=app_token_header(disposable_app_token))
-        check("token d'une app désactivée -> 401", status == 401, f"status={status}")
+        check("token of a deactivated app -> 401", status == 401, f"status={status}")
 
         status, payload, _ = http("POST", f"/apps/{disposable_app_id}/activate", headers=bearer(token_a))
         check("POST /apps/{id}/activate -> 200", status == 200 and payload.get("is_active") is True, f"status={status}")
 
         status, _, _ = http("DELETE", f"/apps/{disposable_app_id}", headers=bearer(token_a))
-        check("DELETE /apps/{id} (owner) -> 204 (suppression réelle)", status == 204, f"status={status}")
+        check("DELETE /apps/{id} (owner) -> 204 (real deletion)", status == 204, f"status={status}")
         created_app_ids.remove(disposable_app_id)
 
         status, _, _ = http("GET", f"/apps/{disposable_app_id}", headers=bearer(token_a))
-        check("GET /apps/{id} après suppression -> 404", status == 404, f"status={status}")
+        check("GET /apps/{id} after deletion -> 404", status == 404, f"status={status}")
 
     return {"app_id": app_id, "app_token": app_token, "owner_token": token_a}
 
 
 def test_end_users_crud(apps_ctx, users_ctx, admin_ctx):
-    section("EndUsers CRUD + auth (X-App-Token + permissions owner/admin)")
+    section("EndUsers CRUD + auth (X-App-Token + owner/admin permissions)")
 
     if not apps_ctx:
-        info("section ignorée (pas d'App disponible)")
+        info("section skipped (no App available)")
         return
 
     app_token = apps_ctx["app_token"]
@@ -631,10 +630,10 @@ def test_end_users_crud(apps_ctx, users_ctx, admin_ctx):
     status, _, _ = http("POST", "/end-users", {
         "first_name": "X", "last_name": "Y", "email": unique_email("noapp"), "password": "Aa1!aaaa",
     })
-    check("POST /end-users sans X-App-Token -> 401", status == 401, f"status={status}")
+    check("POST /end-users without X-App-Token -> 401", status == 401, f"status={status}")
 
     status, payload, eu_email, eu_password = register_end_user(app_token, "carol")
-    ok = check("POST /end-users (avec X-App-Token) -> 201", status == 201, f"status={status} body={payload}")
+    ok = check("POST /end-users (with X-App-Token) -> 201", status == 201, f"status={status} body={payload}")
     if not ok:
         return
     eu_id = payload["id"]
@@ -642,14 +641,14 @@ def test_end_users_crud(apps_ctx, users_ctx, admin_ctx):
     status, _, _ = http("POST", "/end-users", {
         "first_name": "X", "last_name": "Y", "email": eu_email, "password": "Aa1!aaaa",
     }, headers=app_token_header(app_token))
-    check("POST /end-users email dupliqué (même app) -> 409", status == 409, f"status={status}")
+    check("POST /end-users duplicate email (same app) -> 409", status == 409, f"status={status}")
 
     status, _, _ = http("GET", "/end-users", headers=app_token_header(app_token))
-    check("GET /end-users (liste) sans Bearer User -> 401", status == 401, f"status={status}")
+    check("GET /end-users (list) without User Bearer -> 401", status == 401, f"status={status}")
 
     status, payload, _ = http("GET", "/end-users", headers={**app_token_header(app_token), **bearer(owner_token)})
     check(
-        "GET /end-users (liste paginée) par le owner de l'app -> 200",
+        "GET /end-users (paginated list) by the app owner -> 200",
         status == 200 and any(u["id"] == eu_id for u in payload.get("items", [])),
         f"status={status}",
     )
@@ -660,7 +659,7 @@ def test_end_users_crud(apps_ctx, users_ctx, admin_ctx):
         if status == 200:
             token_b = payload["access_token"]
             status, _, _ = http("GET", "/end-users", headers={**app_token_header(app_token), **bearer(token_b)})
-            check("GET /end-users (liste) par un user non-owner non-admin -> 403", status == 403, f"status={status}")
+            check("GET /end-users (list) by a non-owner non-admin user -> 403", status == 403, f"status={status}")
 
     status, payload = login_and_verify_end_user(app_token, eu_email, eu_password)
     ok = check("login + verify-otp end-user -> 200 + token", status == 200 and payload and "access_token" in payload, f"status={status} body={payload}")
@@ -671,27 +670,27 @@ def test_end_users_crud(apps_ctx, users_ctx, admin_ctx):
         check("GET /end-users/me (self) -> 200", status == 200 and payload.get("email") == eu_email, f"status={status}")
 
         status, payload, _ = http("GET", f"/end-users/{eu_id}", headers={**app_token_header(app_token), **bearer(eu_token)})
-        check("GET /end-users/{id} par l'end-user concerné (self) -> 200", status == 200, f"status={status}")
+        check("GET /end-users/{id} by the end-user in question (self) -> 200", status == 200, f"status={status}")
 
         status, _, eu2_email, eu2_password = register_end_user(app_token, "dave")
         status2, payload2 = login_and_verify_end_user(app_token, eu2_email, eu2_password)
         if status2 == 200:
             other_eu_token = payload2["access_token"]
             status, _, _ = http("GET", f"/end-users/{eu_id}", headers={**app_token_header(app_token), **bearer(other_eu_token)})
-            check("GET /end-users/{id} par un AUTRE end-user -> 401", status == 401, f"status={status}")
+            check("GET /end-users/{id} by ANOTHER end-user -> 401", status == 401, f"status={status}")
 
     status, payload, _ = http("PATCH", f"/end-users/{eu_id}", {"first_name": "CarolUpdated"}, headers={**app_token_header(app_token), **bearer(owner_token)})
-    check("PATCH /end-users/{id} par le owner de l'app -> 200", status == 200 and payload.get("first_name") == "CarolUpdated", f"status={status}")
+    check("PATCH /end-users/{id} by the app owner -> 200", status == 200 and payload.get("first_name") == "CarolUpdated", f"status={status}")
 
     if admin_token:
         status, payload, _ = http("PATCH", f"/end-users/{eu_id}", {"last_name": "ByAdmin"}, headers={**app_token_header(app_token), **bearer(admin_token)})
-        check("PATCH /end-users/{id} par un admin -> 200", status == 200 and payload.get("last_name") == "ByAdmin", f"status={status}")
+        check("PATCH /end-users/{id} by an admin -> 200", status == 200 and payload.get("last_name") == "ByAdmin", f"status={status}")
 
     status, payload, _ = http("POST", f"/end-users/{eu_id}/deactivate", headers={**app_token_header(app_token), **bearer(owner_token)})
     check("POST /end-users/{id}/deactivate (owner) -> 200", status == 200 and payload.get("is_active") is False, f"status={status}")
 
     status, payload, _ = http("POST", "/end-users/auth/login", {"email": eu_email, "password": eu_password}, headers=app_token_header(app_token))
-    check("login end-user désactivé -> 403", status == 403, f"status={status}")
+    check("login of a deactivated end-user -> 403", status == 403, f"status={status}")
 
     status, payload, _ = http("POST", f"/end-users/{eu_id}/activate", headers={**app_token_header(app_token), **bearer(owner_token)})
     check("POST /end-users/{id}/activate (owner) -> 200", status == 200 and payload.get("is_active") is True, f"status={status}")
@@ -700,19 +699,19 @@ def test_end_users_crud(apps_ctx, users_ctx, admin_ctx):
     idx = log_cursor()
     status, _, _ = http("POST", "/end-users/auth/forgot-password", {"email": eu_email}, headers=app_token_header(app_token))
     check("POST /end-users/auth/forgot-password -> 200", status == 200, f"status={status}")
-    reset_token = wait_for_marker(f"[DEV] Reset password pour {eu_email} :", idx)
-    check("token de reset end-user trouvé dans les logs", reset_token is not None)
+    reset_token = wait_for_marker(f"[DEV] Password reset for {eu_email}:", idx)
+    check("end-user reset token found in logs", reset_token is not None)
 
     if reset_token:
-        new_password = "NouveauMdp1!"
-        status, _, _ = http("POST", "/end-users/auth/reset-password", {"email": eu_email, "token": "invalide", "new_password": new_password}, headers=app_token_header(app_token))
-        check("reset-password end-user mauvais token -> 400", status == 400, f"status={status}")
+        new_password = "NewPassword1!"
+        status, _, _ = http("POST", "/end-users/auth/reset-password", {"email": eu_email, "token": "invalid", "new_password": new_password}, headers=app_token_header(app_token))
+        check("reset-password end-user wrong token -> 400", status == 400, f"status={status}")
 
         status, _, _ = http("POST", "/end-users/auth/reset-password", {"email": eu_email, "token": reset_token, "new_password": new_password}, headers=app_token_header(app_token))
-        check("reset-password end-user bon token -> 200", status == 200, f"status={status}")
+        check("reset-password end-user correct token -> 200", status == 200, f"status={status}")
 
         status, _ = login_and_verify_end_user(app_token, eu_email, new_password)
-        check("login end-user avec le nouveau mot de passe -> 200", status == 200, f"status={status}")
+        check("login end-user with the new password -> 200", status == 200, f"status={status}")
         eu_password = new_password
 
     # logout + blacklist end-user
@@ -723,31 +722,31 @@ def test_end_users_crud(apps_ctx, users_ctx, admin_ctx):
         check("POST /end-users/auth/logout -> 200", status == 200, f"status={status}")
 
         status, _, _ = http("GET", "/end-users/me", headers={**app_token_header(app_token), **bearer(fresh_token)})
-        check("GET /end-users/me avec token révoqué -> 401", status == 401, f"status={status}")
+        check("GET /end-users/me with revoked token -> 401", status == 401, f"status={status}")
 
     status, _, _ = http("DELETE", f"/end-users/{eu_id}", headers={**app_token_header(app_token), **bearer(owner_token)})
     check("DELETE /end-users/{id} (owner) -> 204", status == 204, f"status={status}")
 
     status, _, _ = http("GET", f"/end-users/{eu_id}", headers={**app_token_header(app_token), **bearer(owner_token)})
-    check("GET /end-users/{id} après suppression -> 404", status == 404, f"status={status}")
+    check("GET /end-users/{id} after deletion -> 404", status == 404, f"status={status}")
 
 
 def test_cross_jwt_isolation(users_ctx, apps_ctx):
-    section("Isolation des JWT (User vs EndUser)")
+    section("JWT isolation (User vs EndUser)")
 
     if not apps_ctx:
-        info("section ignorée (pas d'App disponible)")
+        info("section skipped (no App available)")
         return
 
     user_a = users_ctx["user_a"]
     status, payload = login_and_verify_user(user_a["email"], user_a["password"])
     if status != 200:
-        info("impossible de relogger user A pour ce test")
+        info("could not re-login user A for this test")
         return
     user_token = payload["access_token"]
 
     status, _, _ = http("GET", "/end-users/me", headers={**app_token_header(apps_ctx["app_token"]), **bearer(user_token)})
-    check("JWT User utilisé sur une route EndUser -> 401", status == 401, f"status={status}")
+    check("User JWT used on an EndUser route -> 401", status == 401, f"status={status}")
 
     status, payload, eu_email, eu_password = register_end_user(apps_ctx["app_token"], "erin")
     if status != 201:
@@ -758,7 +757,7 @@ def test_cross_jwt_isolation(users_ctx, apps_ctx):
     eu_token = payload["access_token"]
 
     status, _, _ = http("GET", "/users/me", headers=bearer(eu_token))
-    check("JWT EndUser utilisé sur une route User -> 401", status == 401, f"status={status}")
+    check("EndUser JWT used on a User route -> 401", status == 401, f"status={status}")
 
 
 def test_brute_force():
@@ -768,7 +767,7 @@ def test_brute_force():
     password = "CorrectHorseBattery1!"
     status, payload, email, password2 = register_user("bruteforce")
     if status != 201:
-        info("impossible de créer le compte pour le test de brute-force")
+        info("could not create the account for the brute-force test")
         return
     password = password2
 
@@ -784,14 +783,14 @@ def test_brute_force():
         if status != 401:
             break
 
-    check(f"brute-force login User : 429 obtenu après {attempts} tentative(s)", got_429, f"dernier status={status} body={payload}")
-    check("header Retry-After présent sur la réponse 429", retry_after_present)
+    check(f"User login brute-force: 429 obtained after {attempts} attempt(s)", got_429, f"last status={status} body={payload}")
+    check("Retry-After header present on the 429 response", retry_after_present)
 
     if got_429:
         status, _, _ = http("POST", "/users/auth/login", {"email": email, "password": password})
-        check("tentative supplémentaire (même avec le bon mot de passe) toujours bloquée -> 429", status == 429, f"status={status}")
+        check("further attempt (even with the correct password) still blocked -> 429", status == 429, f"status={status}")
 
-    # Brute-force côté EndUser (nécessite une App)
+    # Brute-force on the EndUser side (requires an App)
     status, payload, _ = http("POST", "/users", {
         "first_name": "Owner", "last_name": "BF", "email": unique_email("owner-bf"), "password": "Aa1!aaaaaa",
     })
@@ -827,14 +826,14 @@ def test_brute_force():
         if status != 401:
             break
 
-    check(f"brute-force login EndUser : 429 obtenu après {attempts} tentative(s)", got_429, f"dernier status={status} body={payload}")
+    check(f"EndUser login brute-force: 429 obtained after {attempts} attempt(s)", got_429, f"last status={status} body={payload}")
 
 
 def test_audit_logs(apps_ctx, users_ctx, admin_ctx):
-    section("Audit logs (lecture seule, admin / owner)")
+    section("Audit logs (read-only, admin / owner)")
 
     if not admin_ctx or not apps_ctx:
-        info("section ignorée (admin ou App indisponible)")
+        info("section skipped (admin or App unavailable)")
         return
 
     admin_token = admin_ctx["token"]
@@ -842,36 +841,36 @@ def test_audit_logs(apps_ctx, users_ctx, admin_ctx):
     app_id = apps_ctx["app_id"]
 
     status, _, _ = http("POST", "/audit-logs", {})
-    check("POST /audit-logs -> 405 (aucune route d'écriture, GET seul existe)", status == 405, f"status={status}")
+    check("POST /audit-logs -> 405 (no write route, only GET exists)", status == 405, f"status={status}")
 
     status, payload, _ = http("GET", "/audit-logs", headers=bearer(owner_token))
     check("GET /audit-logs (non-admin) -> 403", status == 403, f"status={status}")
 
     status, payload, _ = http("GET", "/audit-logs", headers=bearer(admin_token))
     ok = check(
-        "GET /audit-logs (admin) -> 200, paginé et non vide",
+        "GET /audit-logs (admin) -> 200, paginated and non-empty",
         status == 200 and isinstance(payload.get("items"), list) and payload.get("total", 0) > 0,
         f"status={status} body={payload}",
     )
     if ok:
         check(
-            "les entrées ont bien actor_type/event_type/created_at",
+            "entries do have actor_type/event_type/created_at",
             all({"actor_type", "event_type", "created_at"} <= set(item.keys()) for item in payload["items"]),
         )
 
     status, payload, _ = http("GET", "/audit-logs?event_type=app_created", headers=bearer(admin_token))
     check(
-        "GET /audit-logs?event_type=app_created -> 200, ne contient que ce type",
+        "GET /audit-logs?event_type=app_created -> 200, only that type",
         status == 200 and all(item["event_type"] == "app_created" for item in payload.get("items", [])),
         f"status={status}",
     )
 
-    status, payload, _ = http("GET", "/audit-logs?event_type=pas-un-event-valide", headers=bearer(admin_token))
-    check("GET /audit-logs?event_type=invalide -> 422", status == 422, f"status={status}")
+    status, payload, _ = http("GET", "/audit-logs?event_type=not-a-valid-event", headers=bearer(admin_token))
+    check("GET /audit-logs?event_type=invalid -> 422", status == 422, f"status={status}")
 
     status, payload, _ = http("GET", f"/audit-logs/apps/{app_id}", headers=bearer(owner_token))
     ok = check(
-        "GET /audit-logs/apps/{id} (owner) -> 200, uniquement cette app",
+        "GET /audit-logs/apps/{id} (owner) -> 200, only this app",
         status == 200 and all(item.get("app_id") == app_id for item in payload.get("items", [])),
         f"status={status} body={payload}",
     )
@@ -885,33 +884,33 @@ def test_audit_logs(apps_ctx, users_ctx, admin_ctx):
         if status == 200:
             token_b = payload["access_token"]
             status, _, _ = http("GET", f"/audit-logs/apps/{app_id}", headers=bearer(token_b))
-            check("GET /audit-logs/apps/{id} par un non-owner non-admin -> 404", status == 404, f"status={status}")
+            check("GET /audit-logs/apps/{id} by a non-owner non-admin -> 404", status == 404, f"status={status}")
 
     status, _, _ = http("GET", "/audit-logs/apps/00000000-0000-0000-0000-000000000000", headers=bearer(admin_token))
-    check("GET /audit-logs/apps/{uuid inexistant} (admin) -> 404", status == 404, f"status={status}")
+    check("GET /audit-logs/apps/{nonexistent uuid} (admin) -> 404", status == 404, f"status={status}")
 
 
 def cleanup(admin_ctx):
-    section("Nettoyage")
+    section("Cleanup")
     admin_token = admin_ctx["token"] if admin_ctx else None
     if not admin_token:
-        info("pas de token admin disponible, nettoyage partiel")
+        info("no admin token available, partial cleanup")
         return
 
     for app_id in list(created_app_ids):
         status, _, _ = http("DELETE", f"/apps/{app_id}", headers=bearer(admin_token))
-        info(f"suppression app {app_id} -> {status}")
+        info(f"deleted app {app_id} -> {status}")
 
     for user_id in list(created_user_ids):
         status, _, _ = http("DELETE", f"/users/{user_id}", headers=bearer(admin_token))
-        info(f"suppression user {user_id} -> {status}")
+        info(f"deleted user {user_id} -> {status}")
 
     if admin_ctx:
         status, _, _ = http("DELETE", f"/users/{admin_ctx['id']}", headers=bearer(admin_token))
-        info(f"suppression admin {admin_ctx['id']} -> {status}")
+        info(f"deleted admin {admin_ctx['id']} -> {status}")
 
 
-# ==================== Rapport ====================
+# ==================== Report ====================
 
 def write_report():
     total = len(results)
@@ -919,11 +918,11 @@ def write_report():
     failed = total - passed
 
     lines = []
-    lines.append(f"# Rapport de test — Step API")
+    lines.append(f"# Test Report — Step API")
     lines.append("")
-    lines.append(f"Généré le {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    lines.append(f"Generated on {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     lines.append("")
-    lines.append(f"**Total : {total} | Réussis : {passed} | Échoués : {failed}**")
+    lines.append(f"**Total: {total} | Passed: {passed} | Failed: {failed}**")
     lines.append("")
 
     by_section = {}
@@ -938,11 +937,11 @@ def write_report():
             mark = "✅" if i["passed"] else "❌"
             lines.append(f"- {mark} {i['name']}")
             if not i["passed"] and i["detail"]:
-                lines.append(f"  - détail : `{i['detail']}`")
+                lines.append(f"  - detail: `{i['detail']}`")
         lines.append("")
 
     if failed:
-        lines.append("## Résumé des échecs")
+        lines.append("## Failure summary")
         lines.append("")
         for r in results:
             if not r["passed"]:
@@ -978,8 +977,8 @@ def main():
     print()
     print(f"{C.BOLD}{'=' * 60}{C.RESET}")
     color = C.GREEN if failed == 0 else C.RED
-    print(f"{color}{C.BOLD}Total : {total} | Réussis : {passed} | Échoués : {failed}{C.RESET}")
-    print(f"Récap complet : {REPORT_PATH}")
+    print(f"{color}{C.BOLD}Total: {total} | Passed: {passed} | Failed: {failed}{C.RESET}")
+    print(f"Full report: {REPORT_PATH}")
     print(f"{C.BOLD}{'=' * 60}{C.RESET}")
 
     sys.exit(1 if failed else 0)
@@ -990,9 +989,9 @@ if __name__ == "__main__":
         main()
     except KeyboardInterrupt:
         stop_server()
-        print("\nInterrompu par l'utilisateur.")
+        print("\nInterrupted by user.")
         sys.exit(130)
     except Exception as exc:
         stop_server()
-        print(f"\n{C.RED}Erreur fatale : {exc}{C.RESET}")
+        print(f"\n{C.RED}Fatal error: {exc}{C.RESET}")
         raise

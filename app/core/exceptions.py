@@ -1,5 +1,5 @@
 class AppError(Exception):
-    """Erreur métier avec code HTTP et message explicites, catchée globalement dans main.py."""
+    """Business error with an explicit HTTP status code and message, caught globally in main.py."""
 
     def __init__(self, status_code: int, message: str):
         self.status_code = status_code
@@ -8,5 +8,5 @@ class AppError(Exception):
 
 
 class EmailDeliveryError(AppError):
-    def __init__(self, message: str = "Impossible d'envoyer l'email de vérification pour le moment, réessayez plus tard"):
+    def __init__(self, message: str = "Unable to send the verification email at the moment, please try again later"):
         super().__init__(503, message)

@@ -1,4 +1,4 @@
-"""schema initial : users, apps, end_users, audit_logs
+"""initial schema: users, apps, end_users, audit_logs
 
 Revision ID: 0001
 Revises:

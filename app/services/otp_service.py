@@ -22,8 +22,8 @@ async def issue_otp(actor_type: str, actor_id: str, email: str, purpose: str = "
     try:
         await send_otp_email(email, code, purpose)
     except Exception as exc:
-        # L'OTP est déjà en Redis (TTL le nettoiera de toute façon) ; on informe
-        # proprement l'appelant plutôt que de laisser fuiter une exception SMTP brute.
+        # The OTP is already in Redis (the TTL will clean it up anyway); we inform
+        # the caller cleanly rather than letting a raw SMTP exception leak through.
         raise EmailDeliveryError() from exc
 
 

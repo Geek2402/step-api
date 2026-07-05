@@ -9,20 +9,20 @@ import bcrypt
 from app.core.config import settings
 
 
-# ---------- Mots de passe ----------
+# ---------- Passwords ----------
 def hash_password(password: str) -> str:
-    """Retourne le hash bcrypt d'un mot de passe."""
+    """Returns the bcrypt hash of a password."""
     return bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
 
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
-    """Vérifie qu'un mot de passe correspond à son hash."""
+    """Checks that a password matches its hash."""
     return bcrypt.checkpw(plain_password.encode("utf-8"), hashed_password.encode("utf-8"))
 
 
-# ---------- Tokens d'application (secrets aléatoires Python) ----------
+# ---------- App tokens (random Python secrets) ----------
 def generate_app_token() -> tuple[str, str, str]:
-    """Retourne (token_clair, prefix_affichable, token_hash_a_stocker)."""
+    """Returns (plain_token, displayable_prefix, token_hash_to_store)."""
     raw = secrets.token_urlsafe(settings.APP_TOKEN_BYTES)
     token = f"{settings.APP_TOKEN_PREFIX}{raw}"
     prefix = token[: len(settings.APP_TOKEN_PREFIX) + 8]

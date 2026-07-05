@@ -11,7 +11,7 @@ def _key(actor_type: str, identifier: str) -> str:
 
 
 async def create_reset_token(actor_type: str, identifier: str) -> str:
-    """Génère un token de réinitialisation à usage unique et le stocke dans Redis (TTL 15 min)."""
+    """Generates a single-use reset token and stores it in Redis (15 min TTL)."""
     token = secrets.token_urlsafe(32)
     await redis_client.set(_key(actor_type, identifier), token, ex=RESET_TOKEN_TTL_SECONDS)
     return token

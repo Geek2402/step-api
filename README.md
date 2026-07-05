@@ -1,223 +1,224 @@
 # Step — Authentication as a Service
 
-Backend FastAPI multi-tenant qui fournit une authentification à deux facteurs (MFA par OTP
-email) en tant que service : les développeurs qui l'utilisent délèguent à Step tout le flow
-d'authentification de leurs propres utilisateurs finaux, sans avoir à réimplémenter
-hashing de mot de passe, OTP, JWT, rate limiting ou audit trail.
+Multi-tenant FastAPI backend that provides two-factor authentication (MFA via email OTP)
+as a service: developers who use it delegate the entire authentication flow of their own
+end users to Step, without having to reimplement password hashing, OTP, JWT, rate limiting,
+or an audit trail.
 
-## Sommaire
+## Table of contents
 
 - [Concept](#concept)
-- [Flow d'authentification](#flow-dauthentification)
-- [Modèle de permissions](#modèle-de-permissions)
+- [Authentication flow](#authentication-flow)
+- [Permission model](#permission-model)
 - [Architecture](#architecture)
-- [Aperçu des routes](#aperçu-des-routes)
-- [Sécurité](#sécurité)
+- [Route overview](#route-overview)
+- [Security](#security)
 - [Installation](#installation)
-- [Variables d'environnement](#variables-denvironnement)
-- [Lancer le serveur](#lancer-le-serveur)
-- [Documentation Swagger](#documentation-swagger)
+- [Environment variables](#environment-variables)
+- [Running the server](#running-the-server)
+- [Swagger documentation](#swagger-documentation)
 - [Tests](#tests)
-- [Pistes d'évolution](#pistes-dévolution)
+- [Roadmap](#roadmap)
 
 ## Concept
 
-Trois types d'acteurs :
+Three types of actors:
 
-- **User** — un développeur (ou un admin, `is_admin` les différencie) qui s'inscrit sur la
-  plateforme Step et crée des **Apps**. C'est son propre compte, protégé par le flow MFA
-  standard (mot de passe + OTP email).
-- **App** — représente une application tierce créée par un User. Chaque App possède un
-  **token secret** unique (`secrets.token_urlsafe`), affiché en clair une seule fois à la
-  création (ou à la rotation). Ce token sert de credential serveur-à-serveur : c'est le
-  backend du développeur intégrateur qui l'utilise (header `X-App-Token`), jamais l'utilisateur
-  final directement.
-- **EndUser** — l'utilisateur final de l'App du développeur. Scopé par `app_id` : l'unicité
-  de l'email est vérifiée par App, pas globalement (le même email peut exister sur deux Apps
-  différentes sans collision). Toutes les routes `/v1/end-users/*` exigent le header
-  `X-App-Token` correspondant à l'App concernée.
+- **User** — a developer (or an admin, distinguished by `is_admin`) who signs up on the
+  Step platform and creates **Apps**. This is their own account, protected by the standard
+  MFA flow (password + email OTP).
+- **App** — represents a third-party application created by a User. Each App has a unique
+  **secret token** (`secrets.token_urlsafe`), shown in clear text only once at creation
+  (or at rotation). This token acts as a server-to-server credential: it is used by the
+  integrating developer's backend (`X-App-Token` header), never directly by the end user.
+- **EndUser** — the end user of the developer's App. Scoped by `app_id`: email uniqueness
+  is checked per App, not globally (the same email can exist on two different Apps without
+  collision). All `/v1/end-users/*` routes require the `X-App-Token` header corresponding
+  to the App in question.
 
-Chaque action significative (inscription, connexion, échec de connexion, lecture, modification,
-activation, suppression, dépassement de rate limit, refus de permission...) est tracée dans un
-**AuditLog**, consultable en lecture seule par les admins (historique complet) et par les
-développeurs pour leurs propres Apps.
+Every significant action (signup, login, failed login, read, update, activation, deletion,
+rate limit exceeded, permission denied...) is traced in an **AuditLog**, readable by admins
+(full history) and by developers for their own Apps.
 
-## Flow d'authentification
+## Authentication flow
 
-Identique pour User et EndUser (seul le header `X-App-Token` change la donne côté EndUser) :
+Identical for User and EndUser (only the `X-App-Token` header changes things on the
+EndUser side):
 
 ```
-POST .../auth/login        → email + password → 200 + envoi d'un OTP par email (SMTP)
+POST .../auth/login        → email + password → 200 + OTP sent by email (SMTP)
 POST .../auth/verify-otp   → email + code      → JWT
-POST .../auth/logout       → Authorization: Bearer <JWT> → révoque le token
+POST .../auth/logout       → Authorization: Bearer <JWT> → revokes the token
 ```
 
-Pas de refresh token : à l'expiration du JWT (30 minutes par défaut), on refait le flow complet.
+No refresh token: once the JWT expires (30 minutes by default), the whole flow is repeated.
 
-Gestion du mot de passe oublié, même principe pour les deux populations :
+Forgot-password handling, same principle for both populations:
 
 ```
-POST .../auth/forgot-password  → email → envoi d'un token de reset par email (usage unique, 15 min)
-POST .../auth/reset-password   → email + token + nouveau mot de passe
+POST .../auth/forgot-password  → email → sends a reset token by email (single-use, 15 min)
+POST .../auth/reset-password   → email + token + new password
 ```
 
-Le message de `forgot-password` est volontairement neutre ("si cet email existe...") pour ne pas
-révéler l'existence d'un compte. Le lien de reset est construit avec `FRONTEND_URL` (pour les
-Users) ou `App.frontend_url` (optionnel, par App, pour les EndUsers) ; si l'URL n'est pas
-configurée, l'email contient le token brut à la place d'un lien cliquable — au développeur
-intégrateur de choisir l'option qui lui convient.
+The `forgot-password` message is intentionally neutral ("if this email exists...") so as
+not to reveal whether an account exists. The reset link is built using `FRONTEND_URL` (for
+Users) or `App.frontend_url` (optional, per App, for EndUsers); if the URL isn't configured,
+the email contains the raw token instead of a clickable link — it's up to the integrating
+developer to pick whichever option suits them.
 
-## Modèle de permissions
+## Permission model
 
-| Ressource | Route | Qui peut y accéder |
+| Resource | Route | Who can access it |
 |---|---|---|
-| User | `POST /v1/users` (inscription) | Public |
-| User | `GET /v1/users/me` | L'utilisateur connecté (lui-même) |
-| User | `GET`/`PATCH`/`DELETE /v1/users/{id}` | Lui-même ou un admin |
-| User | `GET /v1/users` (liste), `activate`/`deactivate`/`promote-admin`/`demote-admin` | Admin uniquement |
-| App | Toutes les routes `/v1/apps/*` | Le créateur de l'App ou un admin |
-| App | `GET /v1/apps` | Ses propres Apps (un admin voit tout par défaut, `?mine=true` restreint aux siennes) |
-| EndUser | `POST /v1/end-users` (inscription) | X-App-Token seul (pas de JWT requis) |
-| EndUser | `GET /v1/end-users/me` | L'EndUser connecté (lui-même) |
-| EndUser | `GET`/`PATCH`/`DELETE /v1/end-users/{id}` | L'EndUser concerné, le créateur de l'App, ou un admin |
-| EndUser | `GET /v1/end-users` (liste), `activate`/`deactivate` | Créateur de l'App ou admin |
-| AuditLog | `GET /v1/audit-logs` (historique complet) | Admin uniquement |
-| AuditLog | `GET /v1/audit-logs/apps/{app_id}` | Créateur de l'App concernée ou un admin |
+| User | `POST /v1/users` (signup) | Public |
+| User | `GET /v1/users/me` | The logged-in user (themself) |
+| User | `GET`/`PATCH`/`DELETE /v1/users/{id}` | Themself or an admin |
+| User | `GET /v1/users` (list), `activate`/`deactivate`/`promote-admin`/`demote-admin` | Admin only |
+| App | All `/v1/apps/*` routes | The App's creator or an admin |
+| App | `GET /v1/apps` | Their own Apps (an admin sees everything by default, `?mine=true` restricts to their own) |
+| EndUser | `POST /v1/end-users` (signup) | X-App-Token only (no JWT required) |
+| EndUser | `GET /v1/end-users/me` | The logged-in EndUser (themself) |
+| EndUser | `GET`/`PATCH`/`DELETE /v1/end-users/{id}` | The EndUser in question, the App's creator, or an admin |
+| EndUser | `GET /v1/end-users` (list), `activate`/`deactivate` | App creator or admin |
+| AuditLog | `GET /v1/audit-logs` (full history) | Admin only |
+| AuditLog | `GET /v1/audit-logs/apps/{app_id}` | The App's creator or an admin |
 
-Un compte désactivé (`is_active=False`) reçoit systématiquement un `401 Unauthorized` sur toute
-route protégée, y compris avec un JWT encore valide.
+A deactivated account (`is_active=False`) always gets a `401 Unauthorized` on any protected
+route, even with a still-valid JWT.
 
 ## Architecture
 
 ```
 app/
-├── core/         # config (pydantic-settings), sécurité (JWT/hash/tokens), rate limiter,
-│                 # redis, email, dépendances FastAPI (auth + permissions croisées)
-├── db/           # engine SQLAlchemy async (asyncpg) + session
+├── core/         # config (pydantic-settings), security (JWT/hash/tokens), rate limiter,
+│                 # redis, email, FastAPI dependencies (auth + cross permissions)
+├── db/           # async SQLAlchemy engine (asyncpg) + session
 ├── models/       # User, App, EndUser, AuditLog (SQLAlchemy 2.0 Mapped/mapped_column)
 │                 # + enums.py (ActorType, AuditEventType)
-├── schemas/      # Pydantic request/response (dont Page[T] générique pour la pagination)
-├── api/v1/       # routers : users, users_auth, apps, end_users, end_users_auth, audit_logs
-│                 # — montés dans router.py
+├── schemas/      # Pydantic request/response (incl. generic Page[T] for pagination)
+├── api/v1/       # routers: users, users_auth, apps, end_users, end_users_auth, audit_logs
+│                 # — mounted in router.py
 └── services/     # otp_service, password_reset_service, audit_service (Redis + AuditLog)
 alembic/          # migrations
-test_app.py       # script de test end-to-end (voir "Tests")
+test_app.py       # end-to-end test script (see "Tests")
 ```
 
-Points clés :
+Key points:
 
-- **Isolation JWT** : deux secrets distincts (`JWT_SECRET_USERS` / `JWT_SECRET_END_USERS`) — un
-  JWT User ne peut jamais être accepté sur une route EndUser et inversement.
-- **Logout par blacklist** : chaque JWT a un `jti` ; le logout le blackliste dans Redis jusqu'à
-  expiration naturelle du token.
-- **Permissions centralisées** dans `app/core/dependencies.py` : `require_admin`,
-  `require_app_owner_or_admin` (X-App-Token + JWT User), `get_owned_app` (dépendance réutilisable
-  pour scoper une App à son créateur), `authorize_end_user_access` (autorise soit l'EndUser
-  concerné via son propre JWT, soit le créateur de l'App/un admin via JWT User).
-- **Audit systématique** : `log_event()` trace lectures, écritures, échecs d'auth, rate limits
-  déclenchés et permissions refusées — voir `app/models/enums.py` pour le catalogue complet des
-  événements.
+- **JWT isolation**: two distinct secrets (`JWT_SECRET_USERS` / `JWT_SECRET_END_USERS`) — a
+  User JWT can never be accepted on an EndUser route and vice versa.
+- **Logout via blacklist**: every JWT has a `jti`; logout blacklists it in Redis until the
+  token naturally expires.
+- **Centralized permissions** in `app/core/dependencies.py`: `require_admin`,
+  `require_app_owner_or_admin` (X-App-Token + User JWT), `get_owned_app` (reusable
+  dependency to scope an App to its creator), `authorize_end_user_access` (authorizes
+  either the EndUser in question via their own JWT, or the App's creator/an admin via
+  User JWT).
+- **Systematic auditing**: `log_event()` traces reads, writes, auth failures, triggered
+  rate limits, and denied permissions — see `app/models/enums.py` for the full catalog of
+  events.
 
-## Aperçu des routes
+## Route overview
 
-Toutes préfixées par `/v1`.
+All prefixed with `/v1`.
 
-| Router | Préfixe | Contenu |
+| Router | Prefix | Content |
 |---|---|---|
-| `users` | `/users` | Inscription, `/me`, CRUD, activation/désactivation, promotion/démotion admin, liste (admin) |
+| `users` | `/users` | Signup, `/me`, CRUD, activation/deactivation, admin promotion/demotion, list (admin) |
 | `users_auth` | `/users/auth` | `login`, `verify-otp`, `logout`, `forgot-password`, `reset-password` |
-| `apps` | `/apps` | Création, liste (paginée, filtrable `?mine=`), CRUD, rotation de token, activation/désactivation |
-| `end_users` | `/end-users` | Inscription (X-App-Token), `/me`, CRUD, liste, activation/désactivation |
-| `end_users_auth` | `/end-users/auth` | `login`, `verify-otp`, `logout`, `forgot-password`, `reset-password` (tout X-App-Token) |
-| `audit_logs` | `/audit-logs` | Lecture seule : historique complet (admin) et par App (créateur/admin) |
+| `apps` | `/apps` | Creation, list (paginated, filterable `?mine=`), CRUD, token rotation, activation/deactivation |
+| `end_users` | `/end-users` | Signup (X-App-Token), `/me`, CRUD, list, activation/deactivation |
+| `end_users_auth` | `/end-users/auth` | `login`, `verify-otp`, `logout`, `forgot-password`, `reset-password` (all X-App-Token) |
+| `audit_logs` | `/audit-logs` | Read-only: full history (admin) and per App (creator/admin) |
 
-Toutes les routes de liste (`GET /v1/users`, `GET /v1/apps`, `GET /v1/end-users`,
-`GET /v1/audit-logs*`) sont paginées via un modèle générique `Page[T]`
-(`items`, `total`, `limit`, `offset`) — query params `limit` (défaut 20, max 100) et `offset`.
+All list routes (`GET /v1/users`, `GET /v1/apps`, `GET /v1/end-users`,
+`GET /v1/audit-logs*`) are paginated via a generic `Page[T]` model
+(`items`, `total`, `limit`, `offset`) — query params `limit` (default 20, max 100) and `offset`.
 
-## Sécurité
+## Security
 
-- **Mots de passe** hashés avec bcrypt (passlib).
-- **Tokens d'App** jamais stockés en clair : seul le hash SHA-256 est en base. Rotation possible
-  via `POST /v1/apps/{id}/rotate-token` (invalide l'ancien immédiatement).
-- **OTP** stockés dans Redis (hashés SHA-256, TTL 5 min par défaut), avec limite de tentatives
-  (`OTP_MAX_ATTEMPTS`) qui verrouille le code après dépassement.
-- **Rate limiting anti-bruteforce** sur les routes de login (User et EndUser), deux fenêtres
-  Redis indépendantes : 5 échecs / 15 min par email ciblé, 20 échecs / 15 min par IP source.
-  Réponse `429` avec header `Retry-After`.
-- **JWT isolés** par population (secrets distincts) + blacklist Redis au logout via le `jti`.
-- **AuditLog** exhaustif : succès et échecs d'authentification, lectures, modifications,
-  activations/désactivations, rate limits déclenchés, accès refusés — consultable en lecture
-  seule par les admins et par les développeurs pour leurs propres Apps.
+- **Passwords** hashed with bcrypt (passlib).
+- **App tokens** never stored in clear text: only the SHA-256 hash is in the database.
+  Rotation is possible via `POST /v1/apps/{id}/rotate-token` (invalidates the old one
+  immediately).
+- **OTP** stored in Redis (SHA-256 hashed, 5 min TTL by default), with an attempt limit
+  (`OTP_MAX_ATTEMPTS`) that locks the code once exceeded.
+- **Anti-brute-force rate limiting** on login routes (User and EndUser), two independent
+  Redis windows: 5 failures / 15 min per targeted email, 20 failures / 15 min per source IP.
+  `429` response with a `Retry-After` header.
+- **Isolated JWTs** per population (distinct secrets) + Redis blacklist on logout via `jti`.
+- **Exhaustive AuditLog**: authentication successes and failures, reads, updates,
+  activations/deactivations, triggered rate limits, denied access — readable by admins
+  and by developers for their own Apps.
 
 ## Installation
 
 ```bash
 python -m venv venv
-source venv/bin/activate          # Windows : venv\Scripts\activate
+source venv/bin/activate          # Windows: venv\Scripts\activate
 pip install -r requirements.txt
 
-cp .env.example .env              # puis renseigner DATABASE_URL, REDIS_URL, secrets JWT, SMTP
+cp .env.example .env              # then fill in DATABASE_URL, REDIS_URL, JWT secrets, SMTP
 ```
 
-Prérequis : PostgreSQL et Redis démarrés (locaux ou via Docker).
+Prerequisites: PostgreSQL and Redis running (locally or via Docker).
 
 ```bash
 alembic upgrade head
 ```
 
-## Variables d'environnement
+## Environment variables
 
-Voir `.env.example` pour le fichier complet — à ne jamais committer un `.env` réel.
+See `.env.example` for the full file — never commit a real `.env`.
 
-| Variable | Rôle |
+| Variable | Purpose |
 |---|---|
-| `PROJECT_NAME` | Nom affiché dans le titre de l'app FastAPI |
-| `ENVIRONMENT` | `development` / `production` (informatif) |
-| `FRONTEND_URL` | Optionnel — base du lien de reset password pour les Users. Vide = token brut envoyé par email |
-| `DATABASE_URL` | DSN PostgreSQL, dialecte `asyncpg` (`postgresql+asyncpg://...`) |
-| `REDIS_URL` | DSN Redis (OTP, blacklist JWT, rate limiting, tokens de reset) |
-| `JWT_SECRET_USERS` / `JWT_SECRET_END_USERS` | Secrets distincts par population — ne jamais les partager |
-| `JWT_ALGORITHM` | Algorithme de signature JWT (`HS256` par défaut) |
-| `ACCESS_TOKEN_TTL_MINUTES` | Durée de vie des JWT (30 min par défaut) |
-| `OTP_TTL_SECONDS` / `OTP_LENGTH` / `OTP_MAX_ATTEMPTS` | Config de l'OTP (durée de vie, nombre de chiffres, tentatives avant verrouillage) |
-| `APP_TOKEN_BYTES` / `APP_TOKEN_PREFIX` | Config du secret aléatoire généré pour chaque App |
-| `SMTP_HOST` / `SMTP_PORT` / `SMTP_USER` / `SMTP_PASSWORD` / `SMTP_FROM` / `SMTP_USE_TLS` | Envoi des emails (OTP, reset password). `SMTP_USER` vide = mode dev, les codes/tokens sont juste affichés dans les logs au lieu d'être envoyés |
+| `PROJECT_NAME` | Name displayed in the FastAPI app title |
+| `ENVIRONMENT` | `development` / `production` (informational) |
+| `FRONTEND_URL` | Optional — base of the password reset link for Users. Empty = raw token sent by email |
+| `DATABASE_URL` | PostgreSQL DSN, `asyncpg` dialect (`postgresql+asyncpg://...`) |
+| `REDIS_URL` | Redis DSN (OTP, JWT blacklist, rate limiting, reset tokens) |
+| `JWT_SECRET_USERS` / `JWT_SECRET_END_USERS` | Distinct secrets per population — never share them |
+| `JWT_ALGORITHM` | JWT signing algorithm (`HS256` by default) |
+| `ACCESS_TOKEN_TTL_MINUTES` | JWT lifetime (30 min by default) |
+| `OTP_TTL_SECONDS` / `OTP_LENGTH` / `OTP_MAX_ATTEMPTS` | OTP config (lifetime, number of digits, attempts before lockout) |
+| `APP_TOKEN_BYTES` / `APP_TOKEN_PREFIX` | Config for the random secret generated for each App |
+| `SMTP_HOST` / `SMTP_PORT` / `SMTP_USER` / `SMTP_PASSWORD` / `SMTP_FROM` / `SMTP_USE_TLS` | Email sending (OTP, password reset). Empty `SMTP_USER` = dev mode, codes/tokens are just printed in the logs instead of being sent |
 
-## Lancer le serveur
+## Running the server
 
 ```bash
 uvicorn app.main:app --reload
 ```
 
-`GET /health` répond `{"status": "ok"}` une fois le serveur démarré.
+`GET /health` returns `{"status": "ok"}` once the server is up.
 
-## Documentation Swagger
+## Swagger documentation
 
-- **`/docs`** — doc publique, routes taguées `end-user-auth`/`end-users` uniquement (inscription,
-  login/OTP, CRUD des utilisateurs finaux) : à donner aux développeurs qui intègrent l'API.
-- **`/docs/admin`** — doc complète (users, apps, end-users, audit-logs...) — usage interne
-  uniquement. ⚠️ À restreindre en prod (IP allowlist / basic auth via Nginx ou Dokku), le "cacher"
-  via l'URL ne suffit pas comme unique protection.
+- **`/docs`** — public doc, routes tagged `end-user-auth`/`end-users` only (signup,
+  login/OTP, end-user CRUD): to be given to developers integrating the API.
+- **`/docs/admin`** — full doc (users, apps, end-users, audit-logs...) — internal use
+  only. ⚠️ Should be restricted in production (IP allowlist / basic auth via Nginx or
+  Dokku) — "hiding" it via the URL is not enough as the sole protection.
 
 ## Tests
 
-`test_app.py` est un script de test end-to-end autonome (aucune dépendance de test à installer :
-stdlib uniquement). Il lance sa propre instance uvicorn sur un port dédié (SMTP désactivé pour
-que les OTP/tokens de reset s'affichent dans les logs au lieu de partir par email réel), exécute
-une centaine de vérifications couvrant toutes les routes, les permissions, le brute-force et la
-gestion d'erreurs, puis nettoie les données qu'il a créées.
+`test_app.py` is a standalone end-to-end test script (no test dependency to install:
+stdlib only). It starts its own uvicorn instance on a dedicated port (SMTP disabled so
+that OTP/reset tokens are printed in the logs instead of being sent by real email), runs
+about a hundred checks covering all routes, permissions, brute-force protection, and
+error handling, then cleans up the data it created.
 
 ```bash
 python test_app.py
 ```
 
-Affichage en temps réel dans le terminal + récap complet dans `test_report.md`. Nécessite
-PostgreSQL/Redis démarrés et les migrations appliquées.
+Real-time output in the terminal + a full summary in `test_report.md`. Requires
+PostgreSQL/Redis running and migrations applied.
 
-## Pistes d'évolution
+## Roadmap
 
-- Déploiement Dokku/Coolify avec HTTPS.
-- Rate limiting additionnel sur `forgot-password`/`reset-password` (actuellement seules les
-  routes de login sont protégées contre le brute-force).
-- Export/rétention configurable de l'AuditLog (purge automatique au-delà d'une certaine durée).
+- Dokku/Coolify deployment with HTTPS.
+- Additional rate limiting on `forgot-password`/`reset-password` (currently only the
+  login routes are protected against brute force).
+- Configurable export/retention for the AuditLog (automatic purge past a certain age).

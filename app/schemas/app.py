@@ -26,4 +26,4 @@ class AppRead(BaseModel):
 
 
 class AppCreated(AppRead):
-    token: str  # affiché en clair une seule fois, à la création / rotation
+    token: str  # shown in clear text only once, at creation / rotation

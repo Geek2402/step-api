@@ -1,4 +1,4 @@
-"""ajout de apps.frontend_url (optionnel, pour le lien de reset password des EndUsers)
+"""add apps.frontend_url (optional, for the EndUsers password reset link)
 
 Revision ID: 0002
 Revises: 0001

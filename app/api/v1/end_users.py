@@ -21,9 +21,9 @@ from app.schemas.end_user import EndUserCreate, EndUserRead, EndUserUpdate
 from app.schemas.pagination import DEFAULT_LIMIT, MAX_LIMIT, Page
 from app.services.audit_service import log_event
 
-# Tag distinct de "end-user-auth" pour que Swagger regroupe séparément le CRUD
-# et le flow d'auth, tout en gardant les deux visibles dans la doc publique /docs
-# (voir la liste PUBLIC_TAGS dans main.py).
+# Tag distinct from "end-user-auth" so that Swagger groups the CRUD routes
+# and the auth flow separately, while keeping both visible in the public
+# /docs (see the PUBLIC_TAGS list in main.py).
 router = APIRouter(prefix="/end-users", tags=["end-users"])
 
 
@@ -35,7 +35,7 @@ async def _get_owned_end_user(end_user_id: uuid.UUID, app: App, db: AsyncSession
                 db, ActorType.APP, AuditEventType.ACCESS_DENIED, app_id=app.id,
                 metadata={"reason": "not_owner", "target_end_user_id": str(end_user_id)},
             )
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Utilisateur introuvable")
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "User not found")
     return end_user
 
 
@@ -50,7 +50,7 @@ async def register(
     )
     if existing.scalar_one_or_none():
         raise HTTPException(
-            status.HTTP_409_CONFLICT, "Un utilisateur existe déjà avec cet email pour cette application"
+            status.HTTP_409_CONFLICT, "A user already exists with this email for this application"
         )
 
     end_user = EndUser(
@@ -127,7 +127,7 @@ async def update_end_user(
         )
         if existing.scalar_one_or_none():
             raise HTTPException(
-                status.HTTP_409_CONFLICT, "Un utilisateur existe déjà avec cet email pour cette application"
+                status.HTTP_409_CONFLICT, "A user already exists with this email for this application"
             )
         end_user.email = payload.email
     if payload.first_name is not None:

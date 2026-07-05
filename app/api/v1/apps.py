@@ -56,8 +56,8 @@ async def list_apps(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    # Un admin voit toutes les apps par défaut ; ?mine=true restreint aux siennes.
-    # Un non-admin ne voit toujours que les siennes, quel que soit ce paramètre.
+    # An admin sees all apps by default; ?mine=true restricts to their own.
+    # A non-admin always sees only their own apps, regardless of this parameter.
     scoped = not (user.is_admin and not mine)
 
     count_query = select(func.count()).select_from(App)

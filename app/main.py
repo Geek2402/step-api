@@ -18,7 +18,7 @@ app = FastAPI(title=settings.PROJECT_NAME, docs_url=None, redoc_url=None)
 app.include_router(api_router, prefix=settings.API_V1_PREFIX)
 
 
-# ---------- Gestion d'erreurs globale ----------
+# ---------- Global error handling ----------
 
 @app.exception_handler(AppError)
 async def app_error_handler(request: Request, exc: AppError):
@@ -27,30 +27,30 @@ async def app_error_handler(request: Request, exc: AppError):
 
 @app.exception_handler(IntegrityError)
 async def integrity_error_handler(request: Request, exc: IntegrityError):
-    # Filet de sécurité pour les races conditions (ex: deux inscriptions simultanées
-    # avec le même email) qui passent entre le SELECT de vérification et l'INSERT.
-    logger.warning("Contrainte d'intégrité violée sur %s : %s", request.url.path, exc)
-    return JSONResponse(status_code=409, content={"detail": "Conflit de données (doublon probable)"})
+    # Safety net for race conditions (e.g. two simultaneous sign-ups
+    # with the same email) that slip between the check SELECT and the INSERT.
+    logger.warning("Integrity constraint violated on %s: %s", request.url.path, exc)
+    return JSONResponse(status_code=409, content={"detail": "Data conflict (likely duplicate)"})
 
 
 @app.exception_handler(RedisError)
 async def redis_error_handler(request: Request, exc: RedisError):
-    logger.error("Erreur Redis sur %s : %s", request.url.path, exc)
-    return JSONResponse(status_code=503, content={"detail": "Service temporairement indisponible, réessayez"})
+    logger.error("Redis error on %s: %s", request.url.path, exc)
+    return JSONResponse(status_code=503, content={"detail": "Service temporarily unavailable, please try again"})
 
 
 @app.exception_handler(Exception)
 async def unhandled_exception_handler(request: Request, exc: Exception):
-    logger.exception("Erreur non gérée sur %s", request.url.path)
-    return JSONResponse(status_code=500, content={"detail": "Erreur interne du serveur"})
+    logger.exception("Unhandled error on %s", request.url.path)
+    return JSONResponse(status_code=500, content={"detail": "Internal server error"})
 
 
 PUBLIC_TAGS = {"end-user-auth", "end-users"}
 
 
 def _end_user_openapi() -> dict:
-    """Doc publique : routes end-user-auth (login/OTP) et end-users (CRUD), donnée aux développeurs."""
-    schema = get_openapi(title="Step — API End-Users", version="1.0.0", routes=app.routes)
+    """Public docs: end-user-auth (login/OTP) and end-users (CRUD) routes, given to integrating developers."""
+    schema = get_openapi(title="Step — End-Users API", version="1.0.0", routes=app.routes)
     schema["paths"] = {
         path: methods
         for path, methods in schema["paths"].items()
@@ -60,8 +60,8 @@ def _end_user_openapi() -> dict:
 
 
 def _admin_openapi() -> dict:
-    """Doc complète, usage interne uniquement."""
-    return get_openapi(title="Step — API complète (admin)", version="1.0.0", routes=app.routes)
+    """Full docs, internal use only."""
+    return get_openapi(title="Step — Full API (admin)", version="1.0.0", routes=app.routes)
 
 
 @app.get("/openapi-public.json", include_in_schema=False)
@@ -76,12 +76,12 @@ async def openapi_admin():
 
 @app.get("/docs", include_in_schema=False)
 async def public_docs():
-    return get_swagger_ui_html(openapi_url="/openapi-public.json", title="Step — API End-Users")
+    return get_swagger_ui_html(openapi_url="/openapi-public.json", title="Step — End-Users API")
 
 
 @app.get("/docs/admin", include_in_schema=False)
 async def admin_docs():
-    return get_swagger_ui_html(openapi_url="/openapi-admin.json", title="Step — API Admin")
+    return get_swagger_ui_html(openapi_url="/openapi-admin.json", title="Step — Admin API")
 
 
 @app.get("/health", tags=["health"])

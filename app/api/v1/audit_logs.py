@@ -15,9 +15,9 @@ from app.schemas.audit_log import AuditLogRead
 from app.schemas.pagination import DEFAULT_LIMIT, MAX_LIMIT, Page
 from app.services.audit_service import log_event
 
-# Routes en lecture seule : aucun POST/PATCH/DELETE, les entrées d'AuditLog ne sont
-# créées que par log_event() au fil des actions du système (voir dependencies.py et
-# les routers users/apps/end-users/*-auth).
+# Read-only routes: no POST/PATCH/DELETE, AuditLog entries are only created by
+# log_event() as system actions happen (see dependencies.py and the
+# users/apps/end-users/*-auth routers).
 router = APIRouter(prefix="/audit-logs", tags=["audit-logs"])
 
 
@@ -51,7 +51,7 @@ async def list_all_audit_logs(
     admin: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ):
-    """Historique complet, tous acteurs et toutes Apps confondus — admins uniquement."""
+    """Complete history, across all actors and all Apps — admins only."""
     count_query = select(func.count()).select_from(AuditLog)
     query = select(AuditLog)
     if app_id is not None:
@@ -78,7 +78,7 @@ async def list_app_audit_logs(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Historique d'une App précise — réservé à son créateur ou à un admin."""
+    """History for a specific App — restricted to its creator or an admin."""
     count_query = select(func.count()).select_from(AuditLog).where(AuditLog.app_id == app.id)
     query = select(AuditLog).where(AuditLog.app_id == app.id)
     count_query = _apply_filters(count_query, actor_type, event_type, since, until)

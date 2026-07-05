@@ -2,18 +2,18 @@ from enum import Enum
 
 
 class ActorType(str, Enum):
-    """Qui est à l'origine d'un événement d'audit."""
+    """Who originated an audit event."""
 
     USER = "user"
     END_USER = "end_user"
-    APP = "app"  # authentification par X-App-Token sans identité User/EndUser établie
+    APP = "app"  # authentication via X-App-Token without an established User/EndUser identity
     SYSTEM = "system"
 
 
 class AuditEventType(str, Enum):
-    """Catalogue complet des événements tracés dans AuditLog."""
+    """Full catalog of events tracked in AuditLog."""
 
-    # ---------- User : authentification ----------
+    # ---------- User: authentication ----------
     USER_REGISTERED = "user_registered"
     USER_LOGIN_FAILED = "user_login_failed"
     USER_OTP_REQUESTED = "user_otp_requested"
@@ -24,7 +24,7 @@ class AuditEventType(str, Enum):
     USER_PASSWORD_RESET_FAILED = "user_password_reset_failed"
     USER_PASSWORD_RESET_COMPLETED = "user_password_reset_completed"
 
-    # ---------- User : CRUD ----------
+    # ---------- User: CRUD ----------
     USER_READ = "user_read"
     USER_LIST = "user_list"
     USER_UPDATED = "user_updated"
@@ -34,7 +34,7 @@ class AuditEventType(str, Enum):
     USER_PROMOTED_ADMIN = "user_promoted_admin"
     USER_DEMOTED_ADMIN = "user_demoted_admin"
 
-    # ---------- EndUser : authentification ----------
+    # ---------- EndUser: authentication ----------
     END_USER_REGISTERED = "end_user_registered"
     END_USER_LOGIN_FAILED = "end_user_login_failed"
     END_USER_OTP_REQUESTED = "end_user_otp_requested"
@@ -45,7 +45,7 @@ class AuditEventType(str, Enum):
     END_USER_PASSWORD_RESET_FAILED = "end_user_password_reset_failed"
     END_USER_PASSWORD_RESET_COMPLETED = "end_user_password_reset_completed"
 
-    # ---------- EndUser : CRUD ----------
+    # ---------- EndUser: CRUD ----------
     END_USER_READ = "end_user_read"
     END_USER_LIST = "end_user_list"
     END_USER_UPDATED = "end_user_updated"
@@ -53,7 +53,7 @@ class AuditEventType(str, Enum):
     END_USER_ACTIVATED = "end_user_activated"
     END_USER_DEACTIVATED = "end_user_deactivated"
 
-    # ---------- App : CRUD ----------
+    # ---------- App: CRUD ----------
     APP_CREATED = "app_created"
     APP_READ = "app_read"
     APP_LIST = "app_list"
@@ -63,10 +63,10 @@ class AuditEventType(str, Enum):
     APP_DEACTIVATED = "app_deactivated"
     APP_TOKEN_ROTATED = "app_token_rotated"
 
-    # ---------- Sécurité transverse ----------
+    # ---------- Cross-cutting security ----------
     APP_TOKEN_INVALID = "app_token_invalid"
     RATE_LIMIT_TRIGGERED = "rate_limit_triggered"
     ACCESS_DENIED = "access_denied"
 
-    # ---------- Audit trail lui-même ----------
+    # ---------- Audit trail itself ----------
     AUDIT_LOG_LIST = "audit_log_list"
