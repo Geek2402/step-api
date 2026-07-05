@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.dependencies import get_current_user, require_admin
 from app.core.security import hash_password
 from app.db.session import get_db
+from app.models.enums import ActorType, AuditEventType
 from app.models.user import User
 from app.schemas.pagination import DEFAULT_LIMIT, MAX_LIMIT, Page
 from app.schemas.user import UserCreate, UserRead, UserUpdate
@@ -15,8 +16,12 @@ from app.services.audit_service import log_event
 router = APIRouter(prefix="/users", tags=["users"])
 
 
-def _check_self_or_admin(target_id: uuid.UUID, user: User) -> None:
+async def _check_self_or_admin(target_id: uuid.UUID, user: User, db: AsyncSession, action: str) -> None:
     if not user.is_admin and user.id != target_id:
+        await log_event(
+            db, ActorType.USER, AuditEventType.ACCESS_DENIED, actor_id=user.id,
+            metadata={"reason": "not_self_or_admin", "target_user_id": str(target_id), "action": action},
+        )
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Accès non autorisé à cet utilisateur")
 
 
@@ -42,12 +47,16 @@ async def register(payload: UserCreate, db: AsyncSession = Depends(get_db)):
     db.add(user)
     await db.commit()
     await db.refresh(user)
-    await log_event(db, "user", "user_registered", actor_id=user.id)
+    await log_event(db, ActorType.USER, AuditEventType.USER_REGISTERED, actor_id=user.id)
     return user
 
 
 @router.get("/me", response_model=UserRead)
-async def me(user: User = Depends(get_current_user)):
+async def me(user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    await log_event(
+        db, ActorType.USER, AuditEventType.USER_READ, actor_id=user.id,
+        metadata={"target_user_id": str(user.id), "self": True},
+    )
     return user
 
 
@@ -55,11 +64,12 @@ async def me(user: User = Depends(get_current_user)):
 async def list_users(
     limit: int = Query(default=DEFAULT_LIMIT, ge=1, le=MAX_LIMIT),
     offset: int = Query(default=0, ge=0),
-    _: User = Depends(require_admin),
+    admin: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ):
     total = (await db.execute(select(func.count()).select_from(User))).scalar_one()
     result = await db.execute(select(User).order_by(User.created_at).limit(limit).offset(offset))
+    await log_event(db, ActorType.USER, AuditEventType.USER_LIST, actor_id=admin.id)
     return Page(items=result.scalars().all(), total=total, limit=limit, offset=offset)
 
 
@@ -67,8 +77,13 @@ async def list_users(
 async def get_user(
     user_id: uuid.UUID, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)
 ):
-    _check_self_or_admin(user_id, user)
-    return await _get_user_or_404(user_id, db)
+    await _check_self_or_admin(user_id, user, db, "get_user")
+    target = await _get_user_or_404(user_id, db)
+    await log_event(
+        db, ActorType.USER, AuditEventType.USER_READ, actor_id=user.id,
+        metadata={"target_user_id": str(target.id), "self": user.id == target.id},
+    )
+    return target
 
 
 @router.patch("/{user_id}", response_model=UserRead)
@@ -78,7 +93,7 @@ async def update_user(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    _check_self_or_admin(user_id, user)
+    await _check_self_or_admin(user_id, user, db, "update_user")
     target = await _get_user_or_404(user_id, db)
 
     if payload.email is not None and payload.email != target.email:
@@ -95,7 +110,10 @@ async def update_user(
 
     await db.commit()
     await db.refresh(target)
-    await log_event(db, "user", "user_updated", actor_id=user.id, metadata={"target_user_id": str(target.id)})
+    await log_event(
+        db, ActorType.USER, AuditEventType.USER_UPDATED, actor_id=user.id,
+        metadata={"target_user_id": str(target.id)},
+    )
     return target
 
 
@@ -103,11 +121,14 @@ async def update_user(
 async def delete_user(
     user_id: uuid.UUID, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)
 ):
-    _check_self_or_admin(user_id, user)
+    await _check_self_or_admin(user_id, user, db, "delete_user")
     target = await _get_user_or_404(user_id, db)
     await db.delete(target)
     await db.commit()
-    await log_event(db, "user", "user_deleted", actor_id=user.id, metadata={"target_user_id": str(target.id)})
+    await log_event(
+        db, ActorType.USER, AuditEventType.USER_DELETED, actor_id=user.id,
+        metadata={"target_user_id": str(target.id)},
+    )
 
 
 @router.post("/{user_id}/activate", response_model=UserRead)
@@ -118,7 +139,10 @@ async def activate_user(
     target.is_active = True
     await db.commit()
     await db.refresh(target)
-    await log_event(db, "user", "user_activated", actor_id=admin.id, metadata={"target_user_id": str(target.id)})
+    await log_event(
+        db, ActorType.USER, AuditEventType.USER_ACTIVATED, actor_id=admin.id,
+        metadata={"target_user_id": str(target.id)},
+    )
     return target
 
 
@@ -130,7 +154,10 @@ async def deactivate_user(
     target.is_active = False
     await db.commit()
     await db.refresh(target)
-    await log_event(db, "user", "user_deactivated", actor_id=admin.id, metadata={"target_user_id": str(target.id)})
+    await log_event(
+        db, ActorType.USER, AuditEventType.USER_DEACTIVATED, actor_id=admin.id,
+        metadata={"target_user_id": str(target.id)},
+    )
     return target
 
 
@@ -142,7 +169,10 @@ async def promote_admin(
     target.is_admin = True
     await db.commit()
     await db.refresh(target)
-    await log_event(db, "user", "user_promoted_admin", actor_id=admin.id, metadata={"target_user_id": str(target.id)})
+    await log_event(
+        db, ActorType.USER, AuditEventType.USER_PROMOTED_ADMIN, actor_id=admin.id,
+        metadata={"target_user_id": str(target.id)},
+    )
     return target
 
 
@@ -154,5 +184,8 @@ async def demote_admin(
     target.is_admin = False
     await db.commit()
     await db.refresh(target)
-    await log_event(db, "user", "user_demoted_admin", actor_id=admin.id, metadata={"target_user_id": str(target.id)})
+    await log_event(
+        db, ActorType.USER, AuditEventType.USER_DEMOTED_ADMIN, actor_id=admin.id,
+        metadata={"target_user_id": str(target.id)},
+    )
     return target

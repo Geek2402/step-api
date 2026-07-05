@@ -8,12 +8,15 @@ from app.core.dependencies import (
     authorize_end_user_access,
     get_current_app,
     get_current_end_user,
+    get_current_user,
     require_app_owner_or_admin,
 )
 from app.core.security import hash_password
 from app.db.session import get_db
 from app.models.app import App
 from app.models.end_user import EndUser
+from app.models.enums import ActorType, AuditEventType
+from app.models.user import User
 from app.schemas.end_user import EndUserCreate, EndUserRead, EndUserUpdate
 from app.schemas.pagination import DEFAULT_LIMIT, MAX_LIMIT, Page
 from app.services.audit_service import log_event
@@ -27,6 +30,11 @@ router = APIRouter(prefix="/end-users", tags=["end-users"])
 async def _get_owned_end_user(end_user_id: uuid.UUID, app: App, db: AsyncSession) -> EndUser:
     end_user = await db.get(EndUser, end_user_id)
     if not end_user or end_user.app_id != app.id:
+        if end_user:
+            await log_event(
+                db, ActorType.APP, AuditEventType.ACCESS_DENIED, app_id=app.id,
+                metadata={"reason": "not_owner", "target_end_user_id": str(end_user_id)},
+            )
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Utilisateur introuvable")
     return end_user
 
@@ -55,12 +63,16 @@ async def register(
     db.add(end_user)
     await db.commit()
     await db.refresh(end_user)
-    await log_event(db, "end_user", "end_user_registered", actor_id=end_user.id, app_id=app.id)
+    await log_event(db, ActorType.END_USER, AuditEventType.END_USER_REGISTERED, actor_id=end_user.id, app_id=app.id)
     return end_user
 
 
 @router.get("/me", response_model=EndUserRead)
-async def me(end_user: EndUser = Depends(get_current_end_user)):
+async def me(end_user: EndUser = Depends(get_current_end_user), db: AsyncSession = Depends(get_db)):
+    await log_event(
+        db, ActorType.END_USER, AuditEventType.END_USER_READ, actor_id=end_user.id, app_id=end_user.app_id,
+        metadata={"target_end_user_id": str(end_user.id), "self": True},
+    )
     return end_user
 
 
@@ -69,6 +81,7 @@ async def list_end_users(
     limit: int = Query(default=DEFAULT_LIMIT, ge=1, le=MAX_LIMIT),
     offset: int = Query(default=0, ge=0),
     app: App = Depends(require_app_owner_or_admin),
+    user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     total = (
@@ -77,6 +90,7 @@ async def list_end_users(
     result = await db.execute(
         select(EndUser).where(EndUser.app_id == app.id).order_by(EndUser.created_at).limit(limit).offset(offset)
     )
+    await log_event(db, ActorType.USER, AuditEventType.END_USER_LIST, actor_id=user.id, app_id=app.id)
     return Page(items=result.scalars().all(), total=total, limit=limit, offset=offset)
 
 
@@ -88,7 +102,11 @@ async def get_end_user(
     db: AsyncSession = Depends(get_db),
 ):
     end_user = await _get_owned_end_user(end_user_id, app, db)
-    await authorize_end_user_access(end_user, app, authorization, db)
+    actor_type, actor_id = await authorize_end_user_access(end_user, app, authorization, db)
+    await log_event(
+        db, actor_type, AuditEventType.END_USER_READ, actor_id=actor_id, app_id=app.id,
+        metadata={"target_end_user_id": str(end_user.id), "self": actor_id == end_user.id},
+    )
     return end_user
 
 
@@ -101,7 +119,7 @@ async def update_end_user(
     db: AsyncSession = Depends(get_db),
 ):
     end_user = await _get_owned_end_user(end_user_id, app, db)
-    await authorize_end_user_access(end_user, app, authorization, db)
+    actor_type, actor_id = await authorize_end_user_access(end_user, app, authorization, db)
 
     if payload.email is not None and payload.email != end_user.email:
         existing = await db.execute(
@@ -121,7 +139,10 @@ async def update_end_user(
 
     await db.commit()
     await db.refresh(end_user)
-    await log_event(db, "end_user", "end_user_updated", actor_id=end_user.id, app_id=app.id)
+    await log_event(
+        db, actor_type, AuditEventType.END_USER_UPDATED, actor_id=actor_id, app_id=app.id,
+        metadata={"target_end_user_id": str(end_user.id)},
+    )
     return end_user
 
 
@@ -133,24 +154,31 @@ async def delete_end_user(
     db: AsyncSession = Depends(get_db),
 ):
     end_user = await _get_owned_end_user(end_user_id, app, db)
-    await authorize_end_user_access(end_user, app, authorization, db)
+    actor_type, actor_id = await authorize_end_user_access(end_user, app, authorization, db)
     end_user_id_for_log = end_user.id
     await db.delete(end_user)
     await db.commit()
-    await log_event(db, "end_user", "end_user_deleted", actor_id=end_user_id_for_log, app_id=app.id)
+    await log_event(
+        db, actor_type, AuditEventType.END_USER_DELETED, actor_id=actor_id, app_id=app.id,
+        metadata={"target_end_user_id": str(end_user_id_for_log)},
+    )
 
 
 @router.post("/{end_user_id}/activate", response_model=EndUserRead)
 async def activate_end_user(
     end_user_id: uuid.UUID,
     app: App = Depends(require_app_owner_or_admin),
+    user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     end_user = await _get_owned_end_user(end_user_id, app, db)
     end_user.is_active = True
     await db.commit()
     await db.refresh(end_user)
-    await log_event(db, "end_user", "end_user_activated", actor_id=end_user.id, app_id=app.id)
+    await log_event(
+        db, ActorType.USER, AuditEventType.END_USER_ACTIVATED, actor_id=user.id, app_id=app.id,
+        metadata={"target_end_user_id": str(end_user.id)},
+    )
     return end_user
 
 
@@ -158,11 +186,15 @@ async def activate_end_user(
 async def deactivate_end_user(
     end_user_id: uuid.UUID,
     app: App = Depends(require_app_owner_or_admin),
+    user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     end_user = await _get_owned_end_user(end_user_id, app, db)
     end_user.is_active = False
     await db.commit()
     await db.refresh(end_user)
-    await log_event(db, "end_user", "end_user_deactivated", actor_id=end_user.id, app_id=app.id)
+    await log_event(
+        db, ActorType.USER, AuditEventType.END_USER_DEACTIVATED, actor_id=user.id, app_id=app.id,
+        metadata={"target_end_user_id": str(end_user.id)},
+    )
     return end_user

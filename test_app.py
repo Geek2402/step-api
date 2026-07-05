@@ -830,6 +830,67 @@ def test_brute_force():
     check(f"brute-force login EndUser : 429 obtenu après {attempts} tentative(s)", got_429, f"dernier status={status} body={payload}")
 
 
+def test_audit_logs(apps_ctx, users_ctx, admin_ctx):
+    section("Audit logs (lecture seule, admin / owner)")
+
+    if not admin_ctx or not apps_ctx:
+        info("section ignorée (admin ou App indisponible)")
+        return
+
+    admin_token = admin_ctx["token"]
+    owner_token = apps_ctx["owner_token"]
+    app_id = apps_ctx["app_id"]
+
+    status, _, _ = http("POST", "/audit-logs", {})
+    check("POST /audit-logs -> 405 (aucune route d'écriture, GET seul existe)", status == 405, f"status={status}")
+
+    status, payload, _ = http("GET", "/audit-logs", headers=bearer(owner_token))
+    check("GET /audit-logs (non-admin) -> 403", status == 403, f"status={status}")
+
+    status, payload, _ = http("GET", "/audit-logs", headers=bearer(admin_token))
+    ok = check(
+        "GET /audit-logs (admin) -> 200, paginé et non vide",
+        status == 200 and isinstance(payload.get("items"), list) and payload.get("total", 0) > 0,
+        f"status={status} body={payload}",
+    )
+    if ok:
+        check(
+            "les entrées ont bien actor_type/event_type/created_at",
+            all({"actor_type", "event_type", "created_at"} <= set(item.keys()) for item in payload["items"]),
+        )
+
+    status, payload, _ = http("GET", "/audit-logs?event_type=app_created", headers=bearer(admin_token))
+    check(
+        "GET /audit-logs?event_type=app_created -> 200, ne contient que ce type",
+        status == 200 and all(item["event_type"] == "app_created" for item in payload.get("items", [])),
+        f"status={status}",
+    )
+
+    status, payload, _ = http("GET", "/audit-logs?event_type=pas-un-event-valide", headers=bearer(admin_token))
+    check("GET /audit-logs?event_type=invalide -> 422", status == 422, f"status={status}")
+
+    status, payload, _ = http("GET", f"/audit-logs/apps/{app_id}", headers=bearer(owner_token))
+    ok = check(
+        "GET /audit-logs/apps/{id} (owner) -> 200, uniquement cette app",
+        status == 200 and all(item.get("app_id") == app_id for item in payload.get("items", [])),
+        f"status={status} body={payload}",
+    )
+
+    status, payload, _ = http("GET", f"/audit-logs/apps/{app_id}", headers=bearer(admin_token))
+    check("GET /audit-logs/apps/{id} (admin) -> 200", status == 200, f"status={status}")
+
+    user_b = users_ctx.get("user_b")
+    if user_b:
+        status, payload = login_and_verify_user(user_b["email"], user_b["password"])
+        if status == 200:
+            token_b = payload["access_token"]
+            status, _, _ = http("GET", f"/audit-logs/apps/{app_id}", headers=bearer(token_b))
+            check("GET /audit-logs/apps/{id} par un non-owner non-admin -> 404", status == 404, f"status={status}")
+
+    status, _, _ = http("GET", "/audit-logs/apps/00000000-0000-0000-0000-000000000000", headers=bearer(admin_token))
+    check("GET /audit-logs/apps/{uuid inexistant} (admin) -> 404", status == 404, f"status={status}")
+
+
 def cleanup(admin_ctx):
     section("Nettoyage")
     admin_token = admin_ctx["token"] if admin_ctx else None
@@ -907,6 +968,7 @@ def main():
         test_end_users_crud(apps_ctx, users_ctx, admin_ctx)
         test_cross_jwt_isolation(users_ctx, apps_ctx)
         test_brute_force()
+        test_audit_logs(apps_ctx, users_ctx, admin_ctx)
     finally:
         cleanup(admin_ctx)
         stop_server()
