@@ -1,7 +1,7 @@
 import uuid
 
-from fastapi import APIRouter, Depends, Header, HTTPException, status
-from sqlalchemy import select
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.dependencies import (
@@ -15,6 +15,7 @@ from app.db.session import get_db
 from app.models.app import App
 from app.models.end_user import EndUser
 from app.schemas.end_user import EndUserCreate, EndUserRead, EndUserUpdate
+from app.schemas.pagination import DEFAULT_LIMIT, MAX_LIMIT, Page
 from app.services.audit_service import log_event
 
 # Tag distinct de "end-user-auth" pour que Swagger regroupe séparément le CRUD
@@ -63,12 +64,20 @@ async def me(end_user: EndUser = Depends(get_current_end_user)):
     return end_user
 
 
-@router.get("", response_model=list[EndUserRead])
+@router.get("", response_model=Page[EndUserRead])
 async def list_end_users(
-    app: App = Depends(require_app_owner_or_admin), db: AsyncSession = Depends(get_db)
+    limit: int = Query(default=DEFAULT_LIMIT, ge=1, le=MAX_LIMIT),
+    offset: int = Query(default=0, ge=0),
+    app: App = Depends(require_app_owner_or_admin),
+    db: AsyncSession = Depends(get_db),
 ):
-    result = await db.execute(select(EndUser).where(EndUser.app_id == app.id))
-    return result.scalars().all()
+    total = (
+        await db.execute(select(func.count()).select_from(EndUser).where(EndUser.app_id == app.id))
+    ).scalar_one()
+    result = await db.execute(
+        select(EndUser).where(EndUser.app_id == app.id).order_by(EndUser.created_at).limit(limit).offset(offset)
+    )
+    return Page(items=result.scalars().all(), total=total, limit=limit, offset=offset)
 
 
 @router.get("/{end_user_id}", response_model=EndUserRead)

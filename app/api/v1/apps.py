@@ -1,7 +1,7 @@
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import select
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.dependencies import get_current_user
@@ -10,6 +10,7 @@ from app.db.session import get_db
 from app.models.app import App
 from app.models.user import User
 from app.schemas.app import AppCreate, AppCreated, AppRead, AppUpdate
+from app.schemas.pagination import DEFAULT_LIMIT, MAX_LIMIT, Page
 from app.services.audit_service import log_event
 
 router = APIRouter(prefix="/apps", tags=["apps"])
@@ -48,19 +49,27 @@ async def create_app(
     return _to_created(app, token)
 
 
-@router.get("", response_model=list[AppRead])
+@router.get("", response_model=Page[AppRead])
 async def list_apps(
-    mine: bool = False, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)
+    mine: bool = False,
+    limit: int = Query(default=DEFAULT_LIMIT, ge=1, le=MAX_LIMIT),
+    offset: int = Query(default=0, ge=0),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
 ):
     # Un admin voit toutes les apps par défaut ; ?mine=true restreint aux siennes.
     # Un non-admin ne voit toujours que les siennes, quel que soit ce paramètre.
-    query = (
-        select(App)
-        if user.is_admin and not mine
-        else select(App).where(App.owner_id == user.id)
-    )
-    result = await db.execute(query)
-    return result.scalars().all()
+    scoped = not (user.is_admin and not mine)
+
+    count_query = select(func.count()).select_from(App)
+    query = select(App)
+    if scoped:
+        count_query = count_query.where(App.owner_id == user.id)
+        query = query.where(App.owner_id == user.id)
+
+    total = (await db.execute(count_query)).scalar_one()
+    result = await db.execute(query.order_by(App.created_at).limit(limit).offset(offset))
+    return Page(items=result.scalars().all(), total=total, limit=limit, offset=offset)
 
 
 async def _get_owned_app(app_id: uuid.UUID, user: User, db: AsyncSession) -> App:

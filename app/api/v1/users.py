@@ -1,13 +1,14 @@
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import select
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.dependencies import get_current_user, require_admin
 from app.core.security import hash_password
 from app.db.session import get_db
 from app.models.user import User
+from app.schemas.pagination import DEFAULT_LIMIT, MAX_LIMIT, Page
 from app.schemas.user import UserCreate, UserRead, UserUpdate
 from app.services.audit_service import log_event
 
@@ -50,10 +51,16 @@ async def me(user: User = Depends(get_current_user)):
     return user
 
 
-@router.get("", response_model=list[UserRead])
-async def list_users(_: User = Depends(require_admin), db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(User))
-    return result.scalars().all()
+@router.get("", response_model=Page[UserRead])
+async def list_users(
+    limit: int = Query(default=DEFAULT_LIMIT, ge=1, le=MAX_LIMIT),
+    offset: int = Query(default=0, ge=0),
+    _: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    total = (await db.execute(select(func.count()).select_from(User))).scalar_one()
+    result = await db.execute(select(User).order_by(User.created_at).limit(limit).offset(offset))
+    return Page(items=result.scalars().all(), total=total, limit=limit, offset=offset)
 
 
 @router.get("/{user_id}", response_model=UserRead)
