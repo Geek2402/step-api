@@ -12,10 +12,10 @@ from app.models.end_user import EndUser
 from app.schemas.end_user import EndUserCreate, EndUserRead, EndUserUpdate
 from app.services.audit_service import log_event
 
-# Tag "end-user-auth" pour rester visible dans la doc publique /docs, au même
-# titre que les routes de login/OTP : ces CRUD sont utilisés par le backend
-# du développeur intégrateur via X-App-Token, pas par la plateforme Step.
-router = APIRouter(prefix="/end-users", tags=["end-user-auth"])
+# Tag distinct de "end-user-auth" pour que Swagger regroupe séparément le CRUD
+# et le flow d'auth, tout en gardant les deux visibles dans la doc publique /docs
+# (voir la liste PUBLIC_TAGS dans main.py).
+router = APIRouter(prefix="/end-users", tags=["end-users"])
 
 
 async def _get_owned_end_user(end_user_id: uuid.UUID, app: App, db: AsyncSession) -> EndUser:

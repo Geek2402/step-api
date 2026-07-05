@@ -45,13 +45,16 @@ async def unhandled_exception_handler(request: Request, exc: Exception):
     return JSONResponse(status_code=500, content={"detail": "Erreur interne du serveur"})
 
 
+PUBLIC_TAGS = {"end-user-auth", "end-users"}
+
+
 def _end_user_openapi() -> dict:
-    """Doc publique : uniquement les routes taguées end-user-auth, donnée aux développeurs."""
+    """Doc publique : routes end-user-auth (login/OTP) et end-users (CRUD), donnée aux développeurs."""
     schema = get_openapi(title="Step — API End-Users", version="1.0.0", routes=app.routes)
     schema["paths"] = {
         path: methods
         for path, methods in schema["paths"].items()
-        if any("end-user-auth" in op.get("tags", []) for op in methods.values())
+        if any(PUBLIC_TAGS & set(op.get("tags", [])) for op in methods.values())
     }
     return schema
 
