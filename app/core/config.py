@@ -1,3 +1,4 @@
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -8,6 +9,17 @@ class Settings(BaseSettings):
     PROJECT_NAME: str = "Step Auth as Service"
     API_V1_PREFIX: str = "/v1"
     ENVIRONMENT: str = "development"
+
+    # CORS — liste d'origines autorisées, séparées par des virgules dans l'env
+    # (ex: "https://app.example.com,https://admin.example.com"). Vide = aucune origine autorisée.
+    ALLOWED_ORIGINS: list[str] = ["http://localhost:3000"]
+
+    @field_validator("ALLOWED_ORIGINS", mode="before")
+    @classmethod
+    def _split_allowed_origins(cls, value):
+        if isinstance(value, str):
+            return [origin.strip() for origin in value.split(",") if origin.strip()]
+        return value
 
     # Platform frontend (for User password reset links).
     # Empty = forgot-password returns the raw token instead of a link.
