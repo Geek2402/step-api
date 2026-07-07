@@ -23,7 +23,7 @@ class Settings(BaseSettings):
 
     # Platform frontend (for User password reset links).
     # Empty = forgot-password returns the raw token instead of a link.
-    FRONTEND_URL: str = ""
+    FRONTEND_URL: str = "http://localhost:3000/auth/reset-password"
 
     # This API's own public base URL, used to build absolute asset URLs
     # (e.g. the logo embedded in transactional emails).
