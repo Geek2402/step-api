@@ -25,6 +25,10 @@ class Settings(BaseSettings):
     # Empty = forgot-password returns the raw token instead of a link.
     FRONTEND_URL: str = ""
 
+    # This API's own public base URL, used to build absolute asset URLs
+    # (e.g. the logo embedded in transactional emails).
+    API_BASE_URL: str = "http://localhost:8000"
+
     # Database
     DATABASE_URL: str
 

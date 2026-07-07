@@ -5,6 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.docs import get_swagger_ui_html
 from fastapi.openapi.utils import get_openapi
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
 from redis.exceptions import RedisError
 from sqlalchemy.exc import IntegrityError
 
@@ -26,6 +27,10 @@ if settings.ALLOWED_ORIGINS:
     )
 
 app.include_router(api_router, prefix=settings.API_V1_PREFIX)
+
+# Static assets (e.g. the logo embedded in transactional emails, referenced by
+# absolute URL since email clients cannot resolve relative paths or bundled assets).
+app.mount("/static", StaticFiles(directory="app/static"), name="static")
 
 
 # ---------- Global error handling ----------
