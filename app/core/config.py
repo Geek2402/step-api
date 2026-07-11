@@ -39,7 +39,7 @@ class Settings(BaseSettings):
     JWT_SECRET_USERS: str = "change-me-users-secret"
     JWT_SECRET_END_USERS: str = "change-me-end-users-secret"
     JWT_ALGORITHM: str = "HS256"
-    ACCESS_TOKEN_TTL_MINUTES: int = 30
+    ACCESS_TOKEN_TTL_MINUTES: int = 1440
 
     # OTP
     OTP_TTL_SECONDS: int = 300
