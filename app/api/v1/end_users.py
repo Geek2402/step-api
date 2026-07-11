@@ -1,7 +1,8 @@
 import uuid
+from datetime import datetime
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.dependencies import (
@@ -14,6 +15,7 @@ from app.core.dependencies import (
 from app.core.security import hash_password
 from app.db.session import get_db
 from app.models.app import App
+from app.models.audit_log import AuditLog
 from app.models.end_user import EndUser
 from app.models.enums import ActorType, AuditEventType
 from app.models.user import User
@@ -25,6 +27,41 @@ from app.services.audit_service import log_event
 # and the auth flow separately, while keeping both visible in the public
 # /docs (see the PUBLIC_TAGS list in main.py).
 router = APIRouter(prefix="/end-users", tags=["end-users"])
+
+
+async def _fetch_activity(
+    db: AsyncSession, app_id: uuid.UUID, end_user_ids: list[uuid.UUID]
+) -> dict[uuid.UUID, tuple[datetime, datetime]]:
+    """Retourne {end_user_id: (first_login, last_active)} déduits des GET /me réussis
+    (auto-lecture END_USER_READ par l'EndUser lui-même dans l'audit trail)."""
+    if not end_user_ids:
+        return {}
+    result = await db.execute(
+        select(AuditLog.actor_id, func.min(AuditLog.created_at), func.max(AuditLog.created_at))
+        .where(
+            AuditLog.actor_type == ActorType.END_USER.value,
+            AuditLog.app_id == app_id,
+            AuditLog.event_type == AuditEventType.END_USER_READ.value,
+            AuditLog.actor_id.in_(end_user_ids),
+        )
+        .group_by(AuditLog.actor_id)
+    )
+    return {row[0]: (row[1], row[2]) for row in result.all()}
+
+
+def _to_read(end_user: EndUser, activity: tuple[datetime, datetime] | None) -> EndUserRead:
+    first_login, last_active = activity or (None, None)
+    return EndUserRead(
+        id=end_user.id,
+        app_id=end_user.app_id,
+        first_name=end_user.first_name,
+        last_name=end_user.last_name,
+        email=end_user.email,
+        is_verified=end_user.is_verified,
+        is_active=end_user.is_active,
+        first_login=first_login,
+        last_active=last_active,
+    )
 
 
 async def _get_owned_end_user(end_user_id: uuid.UUID, app: App, db: AsyncSession) -> EndUser:
@@ -64,7 +101,7 @@ async def register(
     await db.commit()
     await db.refresh(end_user)
     await log_event(db, ActorType.END_USER, AuditEventType.END_USER_REGISTERED, actor_id=end_user.id, app_id=app.id)
-    return end_user
+    return _to_read(end_user, None)
 
 
 @router.get("/me", response_model=EndUserRead)
@@ -73,25 +110,40 @@ async def me(end_user: EndUser = Depends(get_current_end_user), db: AsyncSession
         db, ActorType.END_USER, AuditEventType.END_USER_READ, actor_id=end_user.id, app_id=end_user.app_id,
         metadata={"target_end_user_id": str(end_user.id), "self": True},
     )
-    return end_user
+    activity = await _fetch_activity(db, end_user.app_id, [end_user.id])
+    return _to_read(end_user, activity.get(end_user.id))
 
 
 @router.get("", response_model=Page[EndUserRead])
 async def list_end_users(
+    search: str | None = Query(default=None, description="Recherche par prénom, nom ou email"),
     limit: int = Query(default=DEFAULT_LIMIT, ge=1, le=MAX_LIMIT),
     offset: int = Query(default=0, ge=0),
     app: App = Depends(require_app_owner_or_admin),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    total = (
-        await db.execute(select(func.count()).select_from(EndUser).where(EndUser.app_id == app.id))
-    ).scalar_one()
+    filters = [EndUser.app_id == app.id]
+    if search:
+        pattern = f"%{search}%"
+        filters.append(
+            or_(
+                EndUser.first_name.ilike(pattern),
+                EndUser.last_name.ilike(pattern),
+                EndUser.email.ilike(pattern),
+            )
+        )
+
+    total = (await db.execute(select(func.count()).select_from(EndUser).where(*filters))).scalar_one()
     result = await db.execute(
-        select(EndUser).where(EndUser.app_id == app.id).order_by(EndUser.created_at).limit(limit).offset(offset)
+        select(EndUser).where(*filters).order_by(EndUser.created_at).limit(limit).offset(offset)
     )
+    end_users = result.scalars().all()
+
+    activity = await _fetch_activity(db, app.id, [end_user.id for end_user in end_users])
     await log_event(db, ActorType.USER, AuditEventType.END_USER_LIST, actor_id=user.id, app_id=app.id)
-    return Page(items=result.scalars().all(), total=total, limit=limit, offset=offset)
+    items = [_to_read(end_user, activity.get(end_user.id)) for end_user in end_users]
+    return Page(items=items, total=total, limit=limit, offset=offset)
 
 
 @router.get("/{end_user_id}", response_model=EndUserRead)
@@ -107,7 +159,8 @@ async def get_end_user(
         db, actor_type, AuditEventType.END_USER_READ, actor_id=actor_id, app_id=app.id,
         metadata={"target_end_user_id": str(end_user.id), "self": actor_id == end_user.id},
     )
-    return end_user
+    activity = await _fetch_activity(db, app.id, [end_user.id])
+    return _to_read(end_user, activity.get(end_user.id))
 
 
 @router.patch("/{end_user_id}", response_model=EndUserRead)
@@ -143,7 +196,8 @@ async def update_end_user(
         db, actor_type, AuditEventType.END_USER_UPDATED, actor_id=actor_id, app_id=app.id,
         metadata={"target_end_user_id": str(end_user.id)},
     )
-    return end_user
+    activity = await _fetch_activity(db, app.id, [end_user.id])
+    return _to_read(end_user, activity.get(end_user.id))
 
 
 @router.delete("/{end_user_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -179,7 +233,8 @@ async def activate_end_user(
         db, ActorType.USER, AuditEventType.END_USER_ACTIVATED, actor_id=user.id, app_id=app.id,
         metadata={"target_end_user_id": str(end_user.id)},
     )
-    return end_user
+    activity = await _fetch_activity(db, app.id, [end_user.id])
+    return _to_read(end_user, activity.get(end_user.id))
 
 
 @router.post("/{end_user_id}/deactivate", response_model=EndUserRead)
@@ -197,4 +252,5 @@ async def deactivate_end_user(
         db, ActorType.USER, AuditEventType.END_USER_DEACTIVATED, actor_id=user.id, app_id=app.id,
         metadata={"target_end_user_id": str(end_user.id)},
     )
-    return end_user
+    activity = await _fetch_activity(db, app.id, [end_user.id])
+    return _to_read(end_user, activity.get(end_user.id))

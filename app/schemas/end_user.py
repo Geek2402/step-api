@@ -1,4 +1,5 @@
 import uuid
+from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, EmailStr
 
@@ -27,3 +28,5 @@ class EndUserRead(BaseModel):
     email: EmailStr
     is_verified: bool
     is_active: bool
+    first_login: datetime | None = None
+    last_active: datetime | None = None
