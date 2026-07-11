@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.dependencies import get_current_user, get_owned_app
+from app.core.dependencies import get_current_app, get_current_user, get_owned_app
 from app.core.security import generate_app_token
 from app.db.session import get_db
 from app.models.app import App
@@ -70,6 +70,15 @@ async def list_apps(
     result = await db.execute(query.order_by(App.created_at).limit(limit).offset(offset))
     await log_event(db, ActorType.USER, AuditEventType.APP_LIST, actor_id=user.id)
     return Page(items=result.scalars().all(), total=total, limit=limit, offset=offset)
+
+
+@router.get("/by-token", response_model=AppRead)
+async def get_app_by_token(
+    app: App = Depends(get_current_app),
+    db: AsyncSession = Depends(get_db),
+):
+    await log_event(db, ActorType.APP, AuditEventType.APP_READ, app_id=app.id)
+    return app
 
 
 @router.get("/{app_id}", response_model=AppRead)
