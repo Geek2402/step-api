@@ -52,6 +52,7 @@ async def create_app(
 @router.get("", response_model=Page[AppRead])
 async def list_apps(
     mine: bool = False,
+    search: str | None = Query(default=None, description="Recherche par nom d'App"),
     limit: int = Query(default=DEFAULT_LIMIT, ge=1, le=MAX_LIMIT),
     offset: int = Query(default=0, ge=0),
     user: User = Depends(get_current_user),
@@ -61,11 +62,14 @@ async def list_apps(
     # A non-admin always sees only their own apps, regardless of this parameter.
     scoped = not (user.is_admin and not mine)
 
-    count_query = select(func.count()).select_from(App)
-    query = select(App)
+    filters = []
     if scoped:
-        count_query = count_query.where(App.owner_id == user.id)
-        query = query.where(App.owner_id == user.id)
+        filters.append(App.owner_id == user.id)
+    if search:
+        filters.append(App.name.ilike(f"%{search}%"))
+
+    count_query = select(func.count()).select_from(App).where(*filters)
+    query = select(App).where(*filters)
 
     total = (await db.execute(count_query)).scalar_one()
     result = await db.execute(query.order_by(App.created_at).limit(limit).offset(offset))
