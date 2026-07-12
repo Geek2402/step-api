@@ -12,6 +12,7 @@ class AuditLogRead(BaseModel):
     id: uuid.UUID
     actor_type: ActorType
     actor_id: uuid.UUID | None
+    actor_email: str | None = None
     app_id: uuid.UUID | None
     event_type: AuditEventType
     event_metadata: dict

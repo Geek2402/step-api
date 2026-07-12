@@ -9,6 +9,7 @@ from app.core.dependencies import get_current_user, get_owned_app, require_admin
 from app.db.session import get_db
 from app.models.app import App
 from app.models.audit_log import AuditLog
+from app.models.end_user import EndUser
 from app.models.enums import ActorType, AuditEventType
 from app.models.user import User
 from app.schemas.audit_log import AuditLogRead
@@ -39,6 +40,29 @@ def _apply_filters(
     return query
 
 
+async def _to_audit_log_reads(db: AsyncSession, logs: list[AuditLog]) -> list[AuditLogRead]:
+    """Enrichit chaque AuditLog de l'email de son acteur (user/end_user), sans toucher au modèle."""
+    user_ids = {log.actor_id for log in logs if log.actor_type == ActorType.USER.value and log.actor_id}
+    end_user_ids = {
+        log.actor_id for log in logs if log.actor_type == ActorType.END_USER.value and log.actor_id
+    }
+
+    emails_by_id: dict[uuid.UUID, str] = {}
+    if user_ids:
+        result = await db.execute(select(User.id, User.email).where(User.id.in_(user_ids)))
+        emails_by_id.update(dict(result.all()))
+    if end_user_ids:
+        result = await db.execute(select(EndUser.id, EndUser.email).where(EndUser.id.in_(end_user_ids)))
+        emails_by_id.update(dict(result.all()))
+
+    reads = []
+    for log in logs:
+        read = AuditLogRead.model_validate(log)
+        read.actor_email = emails_by_id.get(log.actor_id) if log.actor_id else None
+        reads.append(read)
+    return reads
+
+
 @router.get("", response_model=Page[AuditLogRead])
 async def list_all_audit_logs(
     limit: int = Query(default=DEFAULT_LIMIT, ge=1, le=MAX_LIMIT),
@@ -63,7 +87,8 @@ async def list_all_audit_logs(
     total = (await db.execute(count_query)).scalar_one()
     result = await db.execute(query.order_by(AuditLog.created_at.desc()).limit(limit).offset(offset))
     await log_event(db, ActorType.USER, AuditEventType.AUDIT_LOG_LIST, actor_id=admin.id)
-    return Page(items=result.scalars().all(), total=total, limit=limit, offset=offset)
+    items = await _to_audit_log_reads(db, result.scalars().all())
+    return Page(items=items, total=total, limit=limit, offset=offset)
 
 
 @router.get("/apps/{app_id}", response_model=Page[AuditLogRead])
@@ -87,4 +112,5 @@ async def list_app_audit_logs(
     total = (await db.execute(count_query)).scalar_one()
     result = await db.execute(query.order_by(AuditLog.created_at.desc()).limit(limit).offset(offset))
     await log_event(db, ActorType.USER, AuditEventType.AUDIT_LOG_LIST, actor_id=user.id, app_id=app.id)
-    return Page(items=result.scalars().all(), total=total, limit=limit, offset=offset)
+    items = await _to_audit_log_reads(db, result.scalars().all())
+    return Page(items=items, total=total, limit=limit, offset=offset)
