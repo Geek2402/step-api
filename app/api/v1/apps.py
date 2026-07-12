@@ -18,6 +18,7 @@ router = APIRouter(prefix="/apps", tags=["apps"])
 def _to_created(app: App, token: str) -> AppCreated:
     return AppCreated(
         id=app.id,
+        owner_id=app.owner_id,
         name=app.name,
         token_prefix=app.token_prefix,
         frontend_url=app.frontend_url,
