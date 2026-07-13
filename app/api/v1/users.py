@@ -1,7 +1,7 @@
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.dependencies import get_current_user, require_admin
@@ -62,13 +62,24 @@ async def me(user: User = Depends(get_current_user), db: AsyncSession = Depends(
 
 @router.get("", response_model=Page[UserRead])
 async def list_users(
+    search: str | None = Query(default=None, description="Recherche par nom, prénom ou email"),
     limit: int = Query(default=DEFAULT_LIMIT, ge=1, le=MAX_LIMIT),
     offset: int = Query(default=0, ge=0),
     admin: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ):
-    total = (await db.execute(select(func.count()).select_from(User))).scalar_one()
-    result = await db.execute(select(User).order_by(User.created_at).limit(limit).offset(offset))
+    filters = []
+    if search:
+        pattern = f"%{search}%"
+        filters.append(
+            or_(User.first_name.ilike(pattern), User.last_name.ilike(pattern), User.email.ilike(pattern))
+        )
+
+    count_query = select(func.count()).select_from(User).where(*filters)
+    query = select(User).where(*filters)
+
+    total = (await db.execute(count_query)).scalar_one()
+    result = await db.execute(query.order_by(User.created_at).limit(limit).offset(offset))
     await log_event(db, ActorType.USER, AuditEventType.USER_LIST, actor_id=admin.id)
     return Page(items=result.scalars().all(), total=total, limit=limit, offset=offset)
 
