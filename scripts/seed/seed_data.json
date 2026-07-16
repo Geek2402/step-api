@@ -1,0 +1,48 @@
+{
+  "schema_version": 1,
+  "apps": {
+    "admin": [
+      {"index": 0, "name": "Step Seed - Admin App 00", "frontend_url": "https://admin-app-00.seed.local"},
+      {"index": 1, "name": "Step Seed - Admin App 01", "frontend_url": null},
+      {"index": 2, "name": "Step Seed - Admin App 02", "frontend_url": "https://admin-app-02.seed.local"},
+      {"index": 3, "name": "Step Seed - Admin App 03", "frontend_url": null},
+      {"index": 4, "name": "Step Seed - Admin App 04", "frontend_url": "https://admin-app-04.seed.local"},
+      {"index": 5, "name": "Step Seed - Admin App 05", "frontend_url": null},
+      {"index": 6, "name": "Step Seed - Admin App 06", "frontend_url": "https://admin-app-06.seed.local"},
+      {"index": 7, "name": "Step Seed - Admin App 07", "frontend_url": null},
+      {"index": 8, "name": "Step Seed - Admin App 08", "frontend_url": "https://admin-app-08.seed.local"},
+      {"index": 9, "name": "Step Seed - Admin App 09", "frontend_url": null}
+    ],
+    "dev": [
+      {"index": 0, "name": "Step Seed - Dev App 00", "frontend_url": "https://dev-app-00.seed.local"},
+      {"index": 1, "name": "Step Seed - Dev App 01", "frontend_url": null},
+      {"index": 2, "name": "Step Seed - Dev App 02", "frontend_url": "https://dev-app-02.seed.local"},
+      {"index": 3, "name": "Step Seed - Dev App 03", "frontend_url": null},
+      {"index": 4, "name": "Step Seed - Dev App 04", "frontend_url": "https://dev-app-04.seed.local"},
+      {"index": 5, "name": "Step Seed - Dev App 05", "frontend_url": null},
+      {"index": 6, "name": "Step Seed - Dev App 06", "frontend_url": "https://dev-app-06.seed.local"},
+      {"index": 7, "name": "Step Seed - Dev App 07", "frontend_url": null},
+      {"index": 8, "name": "Step Seed - Dev App 08", "frontend_url": "https://dev-app-08.seed.local"},
+      {"index": 9, "name": "Step Seed - Dev App 09", "frontend_url": null}
+    ]
+  },
+  "end_user_name_pool": {
+    "first_names": [
+      "Alice", "Bilal", "Chidi", "Diane", "Emeka", "Fatou", "Gael", "Hana",
+      "Ines", "Jamal", "Kofi", "Lena", "Malik", "Nadia", "Omar", "Priya",
+      "Quentin", "Rosa", "Sami", "Tara", "Umar", "Vera", "Wole", "Xin",
+      "Yara", "Zane", "Aiko", "Bruno", "Chloe", "Deon"
+    ],
+    "last_names": [
+      "Nguyen", "Okafor", "Dubois", "Silva", "Haddad", "Ibrahim", "Kovac", "Lindqvist",
+      "Moreau", "Ndiaye", "Osei", "Petit", "Quintero", "Reyes", "Suarez", "Tanaka",
+      "Uwimana", "Vasquez", "Weber", "Yamada"
+    ]
+  },
+  "end_user_email_template": "eu{index:03d}-{owner}-app{app_index:02d}@mailinator.com",
+  "end_users_per_app": 50,
+  "default_password": "SeedPass!2026x",
+  "fixture_app_name_template": "Step Seed - Fictive App ({owner})",
+  "fixture_user_email": "step-seed-fixture-user@mailinator.com",
+  "fixture_user_ratelimit_password": "WrongPassword!Fx"
+}
