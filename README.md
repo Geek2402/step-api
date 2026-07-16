@@ -18,6 +18,7 @@ or an audit trail.
 - [Running the server](#running-the-server)
 - [Swagger documentation](#swagger-documentation)
 - [Tests](#tests)
+- [Seed script](#seed-script)
 - [Roadmap](#roadmap)
 
 ## Concept
@@ -215,6 +216,79 @@ python test_app.py
 
 Real-time output in the terminal + a full summary in `test_report.md`. Requires
 PostgreSQL/Redis running and migrations applied.
+
+## Seed script
+
+`scripts/seed/` populates the database with realistic demo data through the **real running
+API** (not direct DB inserts), so the resulting `AuditLog` reflects genuine traffic — every
+one of the 44 `AuditEventType` values gets exercised at least once, including failure paths
+(wrong password, wrong OTP, rate-limit trips, access-denied, invalid App token).
+
+### Prerequisites
+
+- PostgreSQL, Redis, and the API server itself must already be running (`uvicorn
+  app.main:app`) — the script only talks to the API over HTTP plus a couple of read-only
+  Redis/DB lookups, it never bypasses the app.
+- An **admin** User account and a **dev** (non-admin) User account must already exist
+  (sign up via `POST /v1/users` first, then promote one to admin with
+  `POST /v1/users/{id}/promote-admin`) — the script never creates these two accounts, only
+  the data underneath them.
+
+### Running it
+
+```bash
+venv\Scripts\activate        # or: source venv/bin/activate
+python -m scripts.seed.run
+```
+
+You'll be prompted for the admin's email/password, then the dev's — both verified against
+the real `/login` + `/verify-otp` flow (up to 5 attempts each), including a role check
+(rejects if the "admin" account isn't actually an admin, or vice versa).
+
+Once authenticated, it's fully automated:
+
+1. Creates 10 Apps per account (half with a `frontend_url`, half without) and 50 EndUsers
+   per App (1000 EndUsers total) — skipped for anything that already exists, so the script
+   is safe to re-run.
+2. If some or all of that static data is already present, you're asked whether to fill in
+   what's missing and/or generate a fresh batch of audit-log activity — nothing is
+   recreated or duplicated silently.
+3. Exercises every `AuditEventType` (auth successes/failures, CRUD, activation/deactivation,
+   role changes, rate-limit trips, access-denied, invalid App token, audit-log reads) using
+   a mix of the real admin/dev accounts, one disposable throwaway User, and two disposable
+   "fictive" Apps created and deleted purely to log `APP_CREATED`/`APP_DELETED` — by the end,
+   each account still owns exactly its 10 static Apps and each App still has exactly 50
+   EndUsers.
+4. Logs out every session it opened.
+
+### How it gets the OTP without reading email
+
+OTP codes are stored in Redis only as a SHA-256 hash
+(`otp:{actor_type}:{actor_id}:{purpose}`, see `app/services/otp_service.py`). Since this
+project sends real emails via SMTP by default, the script can't just read an inbox — instead
+it reads that hash directly from the same Redis instance (`REDIS_URL` from `.env`) and
+recovers the 6-digit plaintext by a fast local brute force (10⁶ possibilities, a few
+seconds), then completes the login through the real `/verify-otp` call. This never touches
+`OTP_MAX_ATTEMPTS` (that counter only counts real `/verify-otp` calls). Password-reset
+tokens are simpler: `password_reset_service` stores them in Redis in plain text, so the
+script just reads them back directly.
+
+If `SMTP_USER` is left empty in `.env`, `email_client.py` skips SMTP entirely and prints the
+code to the server console instead (`[DEV] OTP for ...`) — either way, the script's Redis
+lookup works without any change.
+
+### Files
+
+- `scripts/seed/seed_data.json` — all static data (App names/URLs, EndUser name pools, the
+  deterministic EndUser email template, the default seed password). No secrets, no
+  admin/dev credentials. Edit this to change how much data gets generated.
+- `scripts/seed/*.py` — one module per concern (`creds.py` credential verification,
+  `bulk.py` Apps/EndUsers creation, `audit_flow.py` the audit-log exercise, `cleanup.py`
+  final logout, `otp.py`/`db_checks.py`/`http.py`/`state.py`/`config.py` supporting code).
+
+EndUser emails are generated as `eu{index}-{owner}-app{app_index}@mailinator.com` — a real,
+valid domain is required here since `email-validator` rejects reserved/special-use TLDs
+like `.local` or `.test`.
 
 ## Roadmap
 
