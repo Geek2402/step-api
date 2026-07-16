@@ -31,10 +31,10 @@ def _otp_email_html(to_email: str, code: str, ttl_minutes: int) -> str:
               <td style="padding:32px;">
                 <h1 style="margin:0 0 10px 0;font-family:'Space Grotesk',Arial,sans-serif;font-size:20px;
                            font-weight:700;color:#F5F6FA;">
-                  Your verification code
+                  Votre code de vérification
                 </h1>
                 <p style="margin:0 0 24px 0;font-family:Arial,sans-serif;font-size:14px;line-height:1.6;color:#AEB1C2;">
-                  Here is the code to sign in with
+                  Voici le code à saisir pour vous connecter avec
                   <strong style="color:#F0F1F5;">{to_email}</strong>.
                 </p>
                 <div style="margin:0 0 28px 0;padding:18px;background-color:#0a0b0f;border:1px solid #23252e;
@@ -45,8 +45,8 @@ def _otp_email_html(to_email: str, code: str, ttl_minutes: int) -> str:
                   </span>
                 </div>
                 <p style="margin:0;font-family:Arial,sans-serif;font-size:12.5px;color:#6B6E7D;">
-                  This code expires in {ttl_minutes} minutes. If you didn't request this,
-                  simply ignore this email.
+                  Ce code expire dans {ttl_minutes} minutes. Si vous n'êtes pas à l'origine de cette demande,
+                  ignorez simplement cet email.
                 </p>
               </td>
             </tr>
@@ -75,7 +75,7 @@ async def send_otp_email(to_email: str, code: str, purpose: str) -> None:
     message = EmailMessage()
     message["From"] = settings.SMTP_FROM
     message["To"] = to_email
-    message["Subject"] = "Your verification code — Step"
+    message["Subject"] = "Votre code de vérification — Step"
     message.set_content(
         f"Your verification code is: {code}\n"
         f"It expires in {ttl_minutes} minutes.\n\n"
@@ -114,7 +114,7 @@ def _reset_password_html(to_email: str, reset_value: str, ttl_minutes: int) -> s
                       <a href="{reset_value}"
                          style="display:inline-block;padding:14px 28px;font-family:'Space Grotesk',Arial,sans-serif;
                                 font-size:15px;font-weight:600;color:#0a0b0f;text-decoration:none;border-radius:10px;">
-                        Reset my password &rarr;
+                        Réinitialiser mon mot de passe &rarr;
                       </a>
                     </td>
                   </tr>
@@ -146,17 +146,17 @@ def _reset_password_html(to_email: str, reset_value: str, ttl_minutes: int) -> s
               <td style="padding:32px;">
                 <h1 style="margin:0 0 10px 0;font-family:'Space Grotesk',Arial,sans-serif;font-size:20px;
                            font-weight:700;color:#F5F6FA;">
-                  Password reset
+                  Réinitialisation de mot de passe
                 </h1>
                 <p style="margin:0 0 24px 0;font-family:Arial,sans-serif;font-size:14px;line-height:1.6;color:#AEB1C2;">
-                  You requested a password reset for the account associated with
-                  <strong style="color:#F0F1F5;">{to_email}</strong>. Click the button below to
-                  choose a new password.
+                  Vous avez demandé la réinitialisation du mot de passe associé à
+                  <strong style="color:#F0F1F5;">{to_email}</strong>. Cliquez sur le bouton ci-dessous pour
+                  choisir un nouveau mot de passe.
                 </p>
                 {action_html}
                 <p style="margin:0;font-family:Arial,sans-serif;font-size:12.5px;color:#6B6E7D;">
-                  This link expires in {ttl_minutes} minutes. If you didn't request this,
-                  simply ignore this email.
+                  Ce lien expire dans {ttl_minutes} minutes. Si vous n'êtes pas à l'origine de cette demande,
+                  ignorez simplement cet email.
                 </p>
               </td>
             </tr>
@@ -186,7 +186,7 @@ async def send_reset_password_email(to_email: str, reset_value: str, ttl_minutes
     message = EmailMessage()
     message["From"] = settings.SMTP_FROM
     message["To"] = to_email
-    message["Subject"] = "Password reset — Step"
+    message["Subject"] = "Réinitialisation de mot de passe — Step"
     message.set_content(
         f"Here is your password reset link/token:\n\n{reset_value}\n\n"
         f"It expires in {ttl_minutes} minutes.\n\n"
