@@ -10,8 +10,8 @@ class Settings(BaseSettings):
     API_V1_PREFIX: str = "/v1"
     ENVIRONMENT: str = "development"
 
-    # CORS — liste d'origines autorisées, séparées par des virgules dans l'env
-    # (ex: "https://app.example.com,https://admin.example.com"). Vide = aucune origine autorisée.
+    # CORS — list of allowed origins, comma-separated in the env var
+    # (e.g. "https://app.example.com,https://admin.example.com"). Empty = no origin allowed.
     ALLOWED_ORIGINS: list[str] = ["http://localhost:3000"]
 
     @field_validator("ALLOWED_ORIGINS", mode="before")

@@ -41,7 +41,7 @@ def _apply_filters(
 
 
 async def _to_audit_log_reads(db: AsyncSession, logs: list[AuditLog]) -> list[AuditLogRead]:
-    """Enrichit chaque AuditLog de l'email de son acteur (user/end_user), sans toucher au modèle."""
+    """Enriches each AuditLog with its actor's email (user/end_user), without touching the model."""
     user_ids = {log.actor_id for log in logs if log.actor_type == ActorType.USER.value and log.actor_id}
     end_user_ids = {
         log.actor_id for log in logs if log.actor_type == ActorType.END_USER.value and log.actor_id
@@ -63,7 +63,7 @@ async def _to_audit_log_reads(db: AsyncSession, logs: list[AuditLog]) -> list[Au
     return reads
 
 
-@router.get("", response_model=Page[AuditLogRead])
+@router.get("", response_model=Page[AuditLogRead], summary="List the full audit trail (admin only)")
 async def list_all_audit_logs(
     limit: int = Query(default=DEFAULT_LIMIT, ge=1, le=MAX_LIMIT),
     offset: int = Query(default=0, ge=0),
@@ -75,7 +75,18 @@ async def list_all_audit_logs(
     admin: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ):
-    """Complete history, across all actors and all Apps — admins only."""
+    """Returns the complete, read-only audit trail across every actor and every App.
+
+    Admin only. Every meaningful action in the system is logged here — not just writes, but
+    also reads, auth successes/failures, rate-limit trips, and access-denied events. Results
+    are ordered most-recent first and paginated via `limit` (default 20, max 100) and `offset`;
+    the response envelope includes `total`. Optional filters: `actor_type` (`user`/`end_user`/
+    `app`), `event_type` (any `AuditEventType` value), `app_id` (restrict to one App), and
+    `since`/`until` (ISO 8601 timestamp bounds on `created_at`). Each entry includes the
+    actor's email when resolvable. Logs an `AUDIT_LOG_LIST` audit event for this read itself.
+
+    Errors: 403 if the caller is not an admin.
+    """
     count_query = select(func.count()).select_from(AuditLog)
     query = select(AuditLog)
     if app_id is not None:
@@ -91,7 +102,7 @@ async def list_all_audit_logs(
     return Page(items=items, total=total, limit=limit, offset=offset)
 
 
-@router.get("/apps/{app_id}", response_model=Page[AuditLogRead])
+@router.get("/apps/{app_id}", response_model=Page[AuditLogRead], summary="List the audit trail for one App")
 async def list_app_audit_logs(
     limit: int = Query(default=DEFAULT_LIMIT, ge=1, le=MAX_LIMIT),
     offset: int = Query(default=0, ge=0),
@@ -103,7 +114,15 @@ async def list_app_audit_logs(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """History for a specific App — restricted to its creator or an admin."""
+    """Returns the read-only audit trail scoped to a single App.
+
+    Requires a valid User JWT; restricted to the App's creator or an admin. Same filters,
+    pagination (`limit`/`offset`/`total`), ordering (most recent first), and actor-email
+    enrichment as `GET /v1/audit-logs`, but pre-scoped to `app_id` from the URL (no separate
+    `app_id` query param here). Logs an `AUDIT_LOG_LIST` audit event for this read itself.
+
+    Errors: 404 if the App does not exist or is not owned by the caller.
+    """
     count_query = select(func.count()).select_from(AuditLog).where(AuditLog.app_id == app.id)
     query = select(AuditLog).where(AuditLog.app_id == app.id)
     count_query = _apply_filters(count_query, actor_type, event_type, since, until)

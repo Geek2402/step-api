@@ -43,13 +43,32 @@ login_ip_limiter = RateLimiter("login_ip_enduser", max_attempts=20, window_secon
 login_email_limiter = RateLimiter("login_email_enduser", max_attempts=5, window_seconds=900)
 
 
-@router.post("/login", response_model=MessageResponse)
+@router.post("/login", response_model=MessageResponse, summary="Log in an EndUser with email and password")
 async def login(
     payload: LoginRequest,
     request: Request,
     app: App = Depends(get_current_app),
     db: AsyncSession = Depends(get_db),
 ):
+    """Starts the login flow for an EndUser of the calling App, by verifying email + password.
+
+    Requires the `X-App-Token` header identifying the App; the email is looked up scoped to
+    that App only (the same email can belong to a different EndUser in another App). On
+    success, no token is issued yet: a one-time verification code (OTP) is emailed to the
+    EndUser and must be confirmed via `POST /verify-otp` to obtain a JWT.
+
+    Rate-limited per App to prevent brute-forcing: 5 failed attempts / 15 min per email, and
+    20 failed attempts / 15 min per source IP (both scoped to this App, so activity on one
+    App never affects another). Exceeding either returns 429 with a `Retry-After` header and
+    logs a `RATE_LIMIT_TRIGGERED` audit event. A disabled account does not count against the
+    rate limit.
+
+    Errors:
+    - 401 if the `X-App-Token` header is missing/invalid, or the email/password combination
+      is incorrect.
+    - 403 if the account exists but has been deactivated.
+    - 429 if a rate limit has been exceeded.
+    """
     client_ip = get_client_ip(request)
     # Composite key app_id + email: the same email can exist across
     # several apps, their counters must not be mixed.
@@ -95,12 +114,26 @@ async def login(
     return MessageResponse(message="Verification code sent by email")
 
 
-@router.post("/verify-otp", response_model=EndUserTokenResponse)
+@router.post(
+    "/verify-otp", response_model=EndUserTokenResponse, summary="Verify the login OTP and obtain a JWT"
+)
 async def verify_otp_route(
     payload: VerifyOtpRequest,
     app: App = Depends(get_current_app),
     db: AsyncSession = Depends(get_db),
 ):
+    """Completes the login flow: exchanges the emailed one-time code for an EndUser JWT.
+
+    Requires the `X-App-Token` header. The code must match the one issued by `POST /login`
+    for this email within this App (single-use, expires after `OTP_TTL_SECONDS`). Too many
+    wrong attempts invalidates the code and forces a fresh login. On first successful
+    verification the account is marked verified. The returned JWT is bound to this specific
+    App (it will be rejected by any other App's routes) and expires after 30 minutes by
+    default; there is no refresh token — repeat the full login flow when it expires.
+
+    Errors: 401 if the `X-App-Token` header is missing/invalid, the email is unknown, or the
+    code is invalid/expired/wrong.
+    """
     result = await db.execute(
         select(EndUser).where(EndUser.app_id == app.id, EndUser.email == payload.email)
     )
@@ -129,12 +162,22 @@ async def verify_otp_route(
     return EndUserTokenResponse(access_token=token, email=end_user.email, end_user=end_user)
 
 
-@router.post("/logout", response_model=MessageResponse)
+@router.post("/logout", response_model=MessageResponse, summary="Log out and revoke the current JWT")
 async def logout(
     authorization: str | None = Header(default=None),
     app: App = Depends(get_current_app),
     db: AsyncSession = Depends(get_db),
 ):
+    """Invalidates the EndUser JWT passed in the `Authorization: Bearer <token>` header.
+
+    Requires the `X-App-Token` header. The token's `jti` is added to a Redis blacklist until
+    its natural expiry, so it can never be reused even though JWTs are otherwise stateless.
+    Since there is no refresh token, logging back in requires the full email/password + OTP
+    flow again.
+
+    Errors: 401 if the `X-App-Token` header or the `Authorization` header is
+    missing/malformed, the token is invalid/expired, or it has already been revoked.
+    """
     token = extract_bearer_token(authorization)
     payload = await decode_and_check_blacklist(token, settings.JWT_SECRET_END_USERS)
     await blacklist_token(payload)
@@ -144,12 +187,28 @@ async def logout(
     return MessageResponse(message="Logged out")
 
 
-@router.post("/forgot-password", response_model=MessageResponse)
+@router.post(
+    "/forgot-password", response_model=MessageResponse, summary="Request a password reset link by email"
+)
 async def forgot_password(
     payload: ForgotPasswordRequest,
     app: App = Depends(get_current_app),
     db: AsyncSession = Depends(get_db),
 ):
+    """Sends a password reset link to the given email, if a matching active EndUser exists
+    for this App.
+
+    Requires the `X-App-Token` header. Always returns the same generic success message
+    regardless of whether the email exists, is unverified, or is disabled — this is
+    intentional to prevent account enumeration. The reset link/token is only actually
+    generated and emailed when the account exists and is active, and is valid for a limited
+    time (see `RESET_TOKEN_TTL_SECONDS`). If the App has a `frontend_url` configured, the
+    link points there; otherwise the raw token is returned for the App's backend to embed
+    itself.
+
+    Errors: 401 if the `X-App-Token` header is missing/invalid; 503 if the email fails to
+    send (account state is otherwise never leaked via errors).
+    """
     result = await db.execute(
         select(EndUser).where(EndUser.app_id == app.id, EndUser.email == payload.email)
     )
@@ -175,12 +234,23 @@ async def forgot_password(
     return MessageResponse(message="If this email exists, a reset link has been sent")
 
 
-@router.post("/reset-password", response_model=MessageResponse)
+@router.post(
+    "/reset-password", response_model=MessageResponse, summary="Reset the password using a reset token"
+)
 async def reset_password(
     payload: ResetPasswordRequest,
     app: App = Depends(get_current_app),
     db: AsyncSession = Depends(get_db),
 ):
+    """Sets a new password for an EndUser using the token obtained from `POST /forgot-password`.
+
+    Requires the `X-App-Token` header; does not require being logged in. The reset token is
+    single-use: it is deleted as soon as it is successfully consumed, so the same link cannot
+    be replayed.
+
+    Errors: 401 if the `X-App-Token` header is missing/invalid; 400 if the email is unknown
+    (for this App) or the token is invalid/expired/already used.
+    """
     result = await db.execute(
         select(EndUser).where(EndUser.app_id == app.id, EndUser.email == payload.email)
     )

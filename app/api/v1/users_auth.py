@@ -41,8 +41,23 @@ login_ip_limiter = RateLimiter("login_ip_user", max_attempts=20, window_seconds=
 login_email_limiter = RateLimiter("login_email_user", max_attempts=5, window_seconds=900)
 
 
-@router.post("/login", response_model=MessageResponse)
+@router.post("/login", response_model=MessageResponse, summary="Log in with email and password")
 async def login(payload: LoginRequest, request: Request, db: AsyncSession = Depends(get_db)):
+    """Starts the login flow for a User (dev/admin account) by verifying email + password.
+
+    On success, no token is issued yet: a one-time verification code (OTP) is emailed to the
+    account and must be confirmed via `POST /verify-otp` to obtain a JWT.
+
+    Rate-limited to prevent brute-forcing: 5 failed attempts / 15 min per email, and 20 failed
+    attempts / 15 min per source IP (across all emails). Exceeding either returns 429 with a
+    `Retry-After` header and logs a `RATE_LIMIT_TRIGGERED` audit event. A disabled account does
+    not count against the rate limit.
+
+    Errors:
+    - 401 if the email/password combination is incorrect.
+    - 403 if the account exists but has been deactivated.
+    - 429 if a rate limit has been exceeded.
+    """
     client_ip = get_client_ip(request)
     email_key = payload.email.lower()
 
@@ -83,8 +98,18 @@ async def login(payload: LoginRequest, request: Request, db: AsyncSession = Depe
     return MessageResponse(message="Verification code sent by email")
 
 
-@router.post("/verify-otp", response_model=UserTokenResponse)
+@router.post("/verify-otp", response_model=UserTokenResponse, summary="Verify the login OTP and obtain a JWT")
 async def verify_otp_route(payload: VerifyOtpRequest, db: AsyncSession = Depends(get_db)):
+    """Completes the login flow: exchanges the emailed one-time code for a User JWT.
+
+    The code must match the one issued by `POST /login` for this email (case-sensitive,
+    single-use, expires after `OTP_TTL_SECONDS`). Too many wrong attempts invalidates the
+    code and forces a fresh login. On first successful verification the account is marked
+    verified. The returned JWT (`JWT_SECRET_USERS`) embeds the admin flag and expires after
+    30 minutes by default; there is no refresh token — repeat the full login flow when it expires.
+
+    Errors: 401 if the email is unknown or the code is invalid/expired/wrong.
+    """
     result = await db.execute(select(User).where(User.email == payload.email))
     user = result.scalar_one_or_none()
     if not user:
@@ -109,8 +134,17 @@ async def verify_otp_route(payload: VerifyOtpRequest, db: AsyncSession = Depends
     return UserTokenResponse(access_token=token, user=user)
 
 
-@router.post("/logout", response_model=MessageResponse)
+@router.post("/logout", response_model=MessageResponse, summary="Log out and revoke the current JWT")
 async def logout(authorization: str | None = Header(default=None), db: AsyncSession = Depends(get_db)):
+    """Invalidates the JWT passed in the `Authorization: Bearer <token>` header.
+
+    The token's `jti` is added to a Redis blacklist until its natural expiry, so it can never
+    be reused even though JWTs are otherwise stateless. Since there is no refresh token, logging
+    back in requires the full email/password + OTP flow again.
+
+    Errors: 401 if the header is missing/malformed, the token is invalid/expired, or it has
+    already been revoked.
+    """
     token = extract_bearer_token(authorization)
     payload = await decode_and_check_blacklist(token, settings.JWT_SECRET_USERS)
     await blacklist_token(payload)
@@ -118,8 +152,17 @@ async def logout(authorization: str | None = Header(default=None), db: AsyncSess
     return MessageResponse(message="Logged out")
 
 
-@router.post("/forgot-password", response_model=MessageResponse)
+@router.post("/forgot-password", response_model=MessageResponse, summary="Request a password reset link by email")
 async def forgot_password(payload: ForgotPasswordRequest, db: AsyncSession = Depends(get_db)):
+    """Sends a password reset link to the given email, if a matching active account exists.
+
+    Always returns the same generic success message regardless of whether the email exists,
+    is unverified, or is disabled — this is intentional to prevent account enumeration. The
+    reset link/token is only actually generated and emailed when the account exists and is
+    active, and is valid for a limited time (see `RESET_TOKEN_TTL_SECONDS`).
+
+    Errors: 503 if the email fails to send (account state is otherwise never leaked via errors).
+    """
     result = await db.execute(select(User).where(User.email == payload.email))
     user = result.scalar_one_or_none()
 
@@ -139,8 +182,15 @@ async def forgot_password(payload: ForgotPasswordRequest, db: AsyncSession = Dep
     return MessageResponse(message="If this email exists, a reset link has been sent")
 
 
-@router.post("/reset-password", response_model=MessageResponse)
+@router.post("/reset-password", response_model=MessageResponse, summary="Reset the password using a reset token")
 async def reset_password(payload: ResetPasswordRequest, db: AsyncSession = Depends(get_db)):
+    """Sets a new password using the token obtained from `POST /forgot-password`.
+
+    The reset token is single-use: it is deleted as soon as it is successfully consumed, so
+    the same link cannot be replayed. Does not require being logged in.
+
+    Errors: 400 if the email is unknown or the token is invalid/expired/already used.
+    """
     result = await db.execute(select(User).where(User.email == payload.email))
     user = result.scalar_one_or_none()
 
