@@ -6,3 +6,4 @@ venv/
 CLAUDE.md
 tasks.txt
 test_report.md
+.claude/
