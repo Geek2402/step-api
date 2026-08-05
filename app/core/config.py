@@ -1,5 +1,7 @@
+from typing import Annotated
+
 from pydantic import field_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 
 class Settings(BaseSettings):
@@ -12,7 +14,10 @@ class Settings(BaseSettings):
 
     # CORS — list of allowed origins, comma-separated in the env var
     # (e.g. "https://app.example.com,https://admin.example.com"). Empty = no origin allowed.
-    ALLOWED_ORIGINS: list[str] = ["http://localhost:3000"]
+    # `NoDecode` désactive le pré-parsing JSON que pydantic-settings applique par défaut aux
+    # types complexes (list/dict) : sans lui, une valeur d'env "a,b,c" serait passée à json.loads
+    # et lèverait une erreur avant que le validator ci-dessous ne puisse la découper.
+    ALLOWED_ORIGINS: Annotated[list[str], NoDecode] = ["http://localhost:3000"]
 
     @field_validator("ALLOWED_ORIGINS", mode="before")
     @classmethod
