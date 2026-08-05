@@ -3,7 +3,3 @@ __pycache__/
 .env
 .venv/
 venv/
-CLAUDE.md
-tasks.txt
-test_report.md
-.claude/
