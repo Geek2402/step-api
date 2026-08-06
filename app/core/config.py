@@ -14,9 +14,9 @@ class Settings(BaseSettings):
 
     # CORS — list of allowed origins, comma-separated in the env var
     # (e.g. "https://app.example.com,https://admin.example.com"). Empty = no origin allowed.
-    # `NoDecode` désactive le pré-parsing JSON que pydantic-settings applique par défaut aux
-    # types complexes (list/dict) : sans lui, une valeur d'env "a,b,c" serait passée à json.loads
-    # et lèverait une erreur avant que le validator ci-dessous ne puisse la découper.
+    # `NoDecode` disables the JSON pre-parsing that pydantic-settings applies by default to complex
+    # types (list/dict): without it, an env value "a,b,c" would be passed to json.loads and raise
+    # an error before the validator below could split it.
     ALLOWED_ORIGINS: Annotated[list[str], NoDecode] = ["http://localhost:3000"]
 
     @field_validator("ALLOWED_ORIGINS", mode="before")
@@ -55,13 +55,14 @@ class Settings(BaseSettings):
     APP_TOKEN_BYTES: int = 32
     APP_TOKEN_PREFIX: str = "app_live_"
 
-    # SMTP
-    SMTP_HOST: str = "smtp.gmail.com"
-    SMTP_PORT: int = 587
-    SMTP_USER: str = ""
-    SMTP_PASSWORD: str = ""
-    SMTP_FROM: str = "no-reply@step.dev"
-    SMTP_USE_TLS: bool = True
+    # Transactional email via the Brevo HTTP API. Outbound SMTP (ports 25/465/587) is blocked by
+    # most PaaS (Railway, Render…) to fight spam; the HTTPS API goes over port 443, never filtered.
+    # An empty `BREVO_API_KEY` = dev mode: the OTP / reset link is printed to the logs instead of
+    # being actually sent.
+    BREVO_API_KEY: str = ""
+    BREVO_API_URL: str = "https://api.brevo.com/v3/smtp/email"
+    EMAIL_FROM: str = "no-reply@step.dev"
+    EMAIL_FROM_NAME: str = "Step"
 
 
 settings = Settings()

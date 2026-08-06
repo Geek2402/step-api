@@ -1,7 +1,7 @@
 """
 End-to-end test script for the Step API.
 
-Starts its own uvicorn instance (dedicated port, SMTP mode disabled so that
+Starts its own uvicorn instance (dedicated port, email sending disabled so that
 OTP / reset tokens are printed in the logs instead of being sent by real
 email), runs a large battery of HTTP tests covering all routes, security
 protocols (isolated User/EndUser JWTs, blacklist on logout, deactivated
@@ -122,7 +122,7 @@ def app_token_header(token):
 
 def unique_email(prefix):
     # Real domain (mailinator.com) to pass Pydantic's EmailStr validation —
-    # no email is actually sent (SMTP_USER="" forces dev mode server-side).
+    # no email is actually sent (BREVO_API_KEY="" forces dev mode server-side).
     return f"{prefix}.{uuid.uuid4().hex[:10]}@mailinator.com"
 
 
@@ -161,7 +161,7 @@ def _find_python() -> str:
 def start_server():
     global server_proc
     env = os.environ.copy()
-    env["SMTP_USER"] = ""  # force dev mode: OTP/reset printed in logs, no real email
+    env["BREVO_API_KEY"] = ""  # force dev mode: OTP/reset printed in logs, no real email
     env["PYTHONUNBUFFERED"] = "1"  # otherwise the server's print() calls stay buffered in the pipe
     python = _find_python()
     print(f"{C.CYAN}Interpreter used for the server: {python}{C.RESET}", flush=True)

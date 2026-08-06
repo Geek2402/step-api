@@ -47,7 +47,7 @@ Identical for User and EndUser (only the `X-App-Token` header changes things on 
 EndUser side):
 
 ```
-POST .../auth/login        → email + password → 200 + OTP sent by email (SMTP)
+POST .../auth/login        → email + password → 200 + OTP sent by email
 POST .../auth/verify-otp   → email + code      → JWT
 POST .../auth/logout       → Authorization: Bearer <JWT> → revokes the token
 ```
@@ -159,7 +159,7 @@ python -m venv venv
 source venv/bin/activate          # Windows: venv\Scripts\activate
 pip install -r requirements.txt
 
-cp .env.example .env              # then fill in DATABASE_URL, REDIS_URL, JWT secrets, SMTP
+cp .env.example .env              # then fill in DATABASE_URL, REDIS_URL, JWT secrets, BREVO_API_KEY
 ```
 
 Prerequisites: PostgreSQL and Redis running (locally or via Docker).
@@ -184,7 +184,7 @@ See `.env.example` for the full file — never commit a real `.env`.
 | `ACCESS_TOKEN_TTL_MINUTES` | JWT lifetime (30 min by default) |
 | `OTP_TTL_SECONDS` / `OTP_LENGTH` / `OTP_MAX_ATTEMPTS` | OTP config (lifetime, number of digits, attempts before lockout) |
 | `APP_TOKEN_BYTES` / `APP_TOKEN_PREFIX` | Config for the random secret generated for each App |
-| `SMTP_HOST` / `SMTP_PORT` / `SMTP_USER` / `SMTP_PASSWORD` / `SMTP_FROM` / `SMTP_USE_TLS` | Email sending (OTP, password reset). Empty `SMTP_USER` = dev mode, codes/tokens are just printed in the logs instead of being sent |
+| `BREVO_API_KEY` / `EMAIL_FROM` / `EMAIL_FROM_NAME` | Email sending (OTP, password reset) via the Brevo HTTP API. Empty `BREVO_API_KEY` = dev mode, codes/tokens are just printed in the logs instead of being sent |
 
 ## Running the server
 
@@ -205,8 +205,8 @@ uvicorn app.main:app --reload
 ## Tests
 
 `test_app.py` is a standalone end-to-end test script (no test dependency to install:
-stdlib only). It starts its own uvicorn instance on a dedicated port (SMTP disabled so
-that OTP/reset tokens are printed in the logs instead of being sent by real email), runs
+stdlib only). It starts its own uvicorn instance on a dedicated port (email sending disabled
+so that OTP/reset tokens are printed in the logs instead of being sent by real email), runs
 about a hundred checks covering all routes, permissions, brute-force protection, and
 error handling, then cleans up the data it created.
 
@@ -265,7 +265,7 @@ Once authenticated, it's fully automated:
 
 OTP codes are stored in Redis only as a SHA-256 hash
 (`otp:{actor_type}:{actor_id}:{purpose}`, see `app/services/otp_service.py`). Since this
-project sends real emails via SMTP by default, the script can't just read an inbox — instead
+project sends real emails via the Brevo API by default, the script can't just read an inbox — instead
 it reads that hash directly from the same Redis instance (`REDIS_URL` from `.env`) and
 recovers the 6-digit plaintext by a fast local brute force (10⁶ possibilities, a few
 seconds), then completes the login through the real `/verify-otp` call. This never touches
@@ -273,8 +273,8 @@ seconds), then completes the login through the real `/verify-otp` call. This nev
 tokens are simpler: `password_reset_service` stores them in Redis in plain text, so the
 script just reads them back directly.
 
-If `SMTP_USER` is left empty in `.env`, `email_client.py` skips SMTP entirely and prints the
-code to the server console instead (`[DEV] OTP for ...`) — either way, the script's Redis
+If `BREVO_API_KEY` is left empty in `.env`, `email_client.py` skips sending entirely and prints
+the code to the server console instead (`[DEV] Email to ...`) — either way, the script's Redis
 lookup works without any change.
 
 ### Files

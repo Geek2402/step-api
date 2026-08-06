@@ -1,7 +1,35 @@
-import aiosmtplib
-from email.message import EmailMessage
+import httpx
 
 from app.core.config import settings
+
+
+async def _send_email(to_email: str, subject: str, text_content: str, html_content: str) -> None:
+    """Sends a transactional email through the Brevo HTTP API.
+
+    When no API key is configured (local/dev mode), the content is simply logged instead of being
+    sent, so development does not depend on an external service. Any transport or non-2xx error
+    propagates to the caller, which wraps it into an EmailDeliveryError.
+    """
+    if not settings.BREVO_API_KEY:
+        # Dev mode without an email provider configured: log instead of sending.
+        print(f"[DEV] Email to {to_email} | {subject}\n{text_content}")
+        return
+
+    payload = {
+        "sender": {"name": settings.EMAIL_FROM_NAME, "email": settings.EMAIL_FROM},
+        "to": [{"email": to_email}],
+        "subject": subject,
+        "textContent": text_content,
+        "htmlContent": html_content,
+    }
+    headers = {
+        "api-key": settings.BREVO_API_KEY,
+        "accept": "application/json",
+        "content-type": "application/json",
+    }
+    async with httpx.AsyncClient(timeout=10) as client:
+        response = await client.post(settings.BREVO_API_URL, json=payload, headers=headers)
+        response.raise_for_status()
 
 
 def _otp_email_html(to_email: str, code: str, ttl_minutes: int) -> str:
@@ -72,29 +100,16 @@ def _otp_email_html(to_email: str, code: str, ttl_minutes: int) -> str:
 
 async def send_otp_email(to_email: str, code: str, purpose: str) -> None:
     ttl_minutes = settings.OTP_TTL_SECONDS // 60
-    message = EmailMessage()
-    message["From"] = settings.SMTP_FROM
-    message["To"] = to_email
-    message["Subject"] = "Votre code de vérification — Step"
-    message.set_content(
+    text_content = (
         f"Your verification code is: {code}\n"
         f"It expires in {ttl_minutes} minutes.\n\n"
         "If you did not request this, please ignore this email."
     )
-    message.add_alternative(_otp_email_html(to_email, code, ttl_minutes), subtype="html")
-
-    if not settings.SMTP_USER:
-        # Dev mode without SMTP configured: log instead of sending
-        print(f"[DEV] OTP for {to_email} ({purpose}): {code}")
-        return
-
-    await aiosmtplib.send(
-        message,
-        hostname=settings.SMTP_HOST,
-        port=settings.SMTP_PORT,
-        username=settings.SMTP_USER or None,
-        password=settings.SMTP_PASSWORD or None,
-        start_tls=settings.SMTP_USE_TLS,
+    await _send_email(
+        to_email,
+        "Votre code de vérification — Step",
+        text_content,
+        _otp_email_html(to_email, code, ttl_minutes),
     )
 
 
@@ -183,27 +198,15 @@ def _reset_password_html(to_email: str, reset_value: str, ttl_minutes: int) -> s
 
 async def send_reset_password_email(to_email: str, reset_value: str, ttl_minutes: int) -> None:
     """reset_value is either a full link (if a frontend is configured) or the raw token."""
-    message = EmailMessage()
-    message["From"] = settings.SMTP_FROM
-    message["To"] = to_email
-    message["Subject"] = "Réinitialisation de mot de passe — Step"
-    message.set_content(
+    text_content = (
         f"Here is your password reset link/token:\n\n{reset_value}\n\n"
         f"It expires in {ttl_minutes} minutes.\n\n"
         "If you did not request this, please ignore this email."
     )
-    message.add_alternative(_reset_password_html(to_email, reset_value, ttl_minutes), subtype="html")
-
-    if not settings.SMTP_USER:
-        print(f"[DEV] Password reset for {to_email}: {reset_value}")
-        return
-
-    await aiosmtplib.send(
-        message,
-        hostname=settings.SMTP_HOST,
-        port=settings.SMTP_PORT,
-        username=settings.SMTP_USER or None,
-        password=settings.SMTP_PASSWORD or None,
-        start_tls=settings.SMTP_USE_TLS,
+    await _send_email(
+        to_email,
+        "Réinitialisation de mot de passe — Step",
+        text_content,
+        _reset_password_html(to_email, reset_value, ttl_minutes),
     )
 
